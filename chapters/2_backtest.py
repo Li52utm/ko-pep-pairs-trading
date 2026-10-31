@@ -306,7 +306,7 @@ st.download_button("Download trade log (CSV)", log.to_csv(index=False),
 # --------------------------------------------------------------------------- #
 # Execution and slippage (default settings, independent of the sidebar)
 # --------------------------------------------------------------------------- #
-METHODOLOGY_URL = None  # TODO: GitHub URL of docs/METHODOLOGY.md once the repository is public
+METHODOLOGY_URL = "https://github.com/Li52utm/ko-pep-pairs-trading/blob/main/docs/METHODOLOGY.md"
 
 st.subheader("Execution and slippage")
 st.caption("Default settings, full sample. Measured effects of trading on daily closes, "

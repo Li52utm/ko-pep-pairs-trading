@@ -3,7 +3,7 @@
 A textbook pairs trade between Coca-Cola and PepsiCo, tested honestly: no look-ahead, realistic
 costs, out-of-sample research, a test against luck, and a Streamlit dashboard in seven chapters.
 
-**Live demo:** TODO: add the Streamlit Community Cloud URL
+**Live demo:** [https://YOUR-APP.streamlit.app](https://YOUR-APP.streamlit.app)
 
 ![The Story: the dashboard's landing page](docs/images/1_story.png)
 
@@ -158,6 +158,6 @@ An educational project. Nothing here is investment advice.
 
 ## Author
 
-Labeeb. TODO: add LinkedIn URL.
+Labeeb ([LinkedIn](YOUR-LINKEDIN-URL)).
 
 Licensed under the MIT License (see [LICENSE](LICENSE)).

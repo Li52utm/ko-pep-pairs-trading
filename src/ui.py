@@ -640,12 +640,16 @@ def section_heading(numeral: str, title: str) -> None:
     st.html(f'<h2 class="section-heading">{number}{html.escape(title)}</h2>')
 
 
+REPO_URL = "https://github.com/Li52utm/ko-pep-pairs-trading"
+
+
 def footer(lead: str = "Educational project. Not investment advice.") -> None:
     st.divider()
     st.caption(
         f"{lead} "
         "Data: Yahoo Finance (KO, PEP adjusted closes; USD/CHF), "
-        "FRED (US 3-month T-bill DTB3; Swiss 3-month interbank rate IR3TIB01CHM156N)."
+        "FRED (US 3-month T-bill DTB3; Swiss 3-month interbank rate IR3TIB01CHM156N). "
+        f"Source code: [GitHub]({REPO_URL})."
     )
 
 
