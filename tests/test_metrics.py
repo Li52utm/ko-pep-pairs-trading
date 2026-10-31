@@ -90,12 +90,11 @@ def test_profit_factor_and_payoff_ratio() -> None:
     assert m["open_pnl"] == pytest.approx(-999)
 
 
-def test_breakeven_cost_gives_zero_pnl_on_real_data() -> None:
+def test_breakeven_cost_gives_zero_pnl_on_real_data(snapshot_prices: pd.DataFrame) -> None:
     from backtest import run_backtest
-    from data import load_all_data
     from signals import compute_signals
 
-    prices = load_all_data()
+    prices = snapshot_prices
     signals = compute_signals(prices)
     daily, _ = run_backtest(prices, signals)
 

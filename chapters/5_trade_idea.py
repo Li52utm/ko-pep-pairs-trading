@@ -13,12 +13,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-import pandas as pd  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
 import streamlit as st  # noqa: E402
 
 import trade_idea as ti  # noqa: E402
 import ui  # noqa: E402
+import wording  # noqa: E402
 from research import TEST_START  # noqa: E402
 
 ENTRY = ui.SIGNAL_DEFAULTS["entry"]
@@ -60,12 +60,7 @@ def kpis(items: list[tuple]) -> None:
     note_md.append("\n".join(lines))
 
 
-def usd(x: float) -> str:
-    return f"${x:,.2f}"
-
-
-def day(ts: pd.Timestamp) -> str:
-    return f"{ts.day} {ts:%b %Y}"
+usd, day = ui.usd, ui.day
 
 
 # --------------------------------------------------------------------------- #
@@ -172,7 +167,8 @@ kpis([
     ("Z-score", f"{z:.2f}", None, f"entry at ±{ENTRY:g}"),
     ("Hedge ratio (beta)", f"{beta:.2f}", None, f"{state['beta_min']:.2f} to {state['beta_max']:.2f} in 6 months"),
     ("Half-life", f"{state['half_life']:.0f} days", None, "full sample"),
-    ("Cointegration p-value", f"{state['coint_pvalue']:.2f}", None, "last 252 days"),
+    ("Cointegration p-value", f"{state['coint_pvalue']:.2f}", None,
+     f"{state['coint_window']} days to {day(state['coint_end'])}"),
 ])
 tied = ("A p-value this high says the pair has not behaved like a tied pair over the last year."
         if state["coint_pvalue"] > ti.COINT_PVALUE_MAX else "A p-value this low says the pair still looks tied.")
@@ -239,14 +235,14 @@ fig.add_scatter(x=[as_of], y=[z], mode="markers+text", text=["today"], textposit
 reach = max(STOP + 0.5, float(recent.abs().max()) + 0.3)
 fig.update_yaxes(range=[-reach, reach], title_text="z-score")
 fig.update_layout(showlegend=False, hovermode="closest")
-ui.show_chart(fig, "The last six months of the z-score", height=340)
+ui.show_chart(fig, f"The last {wording.period_words(CHART_DAYS)} of the z-score", height=340)
 
 # --------------------------------------------------------------------------- #
 # iii. What history says
 # --------------------------------------------------------------------------- #
 section("iii", "What history says")
 n = analogues["count"]
-start_words = (f"started from a z-score within 0.5 of {abs(analogue_z):.2f} on the same side"
+start_words = (f"started from a z-score within {ti.ANALOGUE_TOLERANCE:g} of {abs(analogue_z):.2f} on the same side"
                if active else f"started near the entry line (z = {analogue_z:+g})")
 if n == 0:
     say(f"No closed trade in the backtest {start_words}.")
@@ -288,7 +284,7 @@ weak_leg = (f" At {beta:.2f} the trade is mostly an outright {'short' if side ==
             f"Coke position ({ui.fmt_money(abs(ticket['notional_ko']))} against "
             f"{ui.fmt_money(abs(ticket['notional_pep']))} of Pepsi)." if abs(beta) < ti.WEAK_BETA else "")
 risks.append(f"**Unstable hedge ratio.** Beta ranged from {state['beta_min']:.2f} to "
-             f"{state['beta_max']:.2f} over the last six months.{weak_leg}")
+             f"{state['beta_max']:.2f} over the last {wording.period_words(ti.BETA_LOOKBACK_DAYS)}.{weak_leg}")
 if in_trade and abs(state["z_trade"]) > abs(z):
     risks.append(f"**The fair value is chasing the price.** Against the fair value the trade was "
                  f"opened on, z is {state['z_trade']:.2f}, not {z:.2f}: the gap has widened, and the "

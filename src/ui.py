@@ -23,15 +23,18 @@ import plotly.io as pio
 import streamlit as st
 
 from backtest import TRADING_DAYS, run_backtest
-from carry import SNB_DATE, SNB_NEXT_ROW, event_impact, run_carry, run_scenarios, scenario_results
+from carry import SNB_DATE, run_carry, run_scenarios, scenario_results
+from carry import snb_carry as carry_snb_carry
 from carry import summary as carry_summary  # noqa: F401  (re-exported for pages)
-from data import load_all_data
+import data
+from data import is_stale, load_all_data
 from metrics import exit_slippage, summarise, yearly_table
 import options
 from pair_hunt import percentile_vs_luck
 from research import DEFAULT_PARAMS, TEST_START, TRAIN_END, TRAIN_START, run_period
 from signals import compute_signals
 from trade_idea import current_state
+import wording
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
@@ -83,8 +86,27 @@ def selected_signal_params(selected: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # Cached data and model runs
 # --------------------------------------------------------------------------- #
-@st.cache_data(show_spinner="Loading prices and rates ...")
+_data_stamp: tuple | None = None  # the snapshot file version the caches were built from
+
+
 def get_data() -> pd.DataFrame:
+    """Prices and rates from the committed snapshot (never downloads).
+
+    The scheduled refresh replaces results/data_snapshot.csv in place. When the
+    file changes under a running server, every cached result is cleared, so no
+    page mixes yesterday's numbers with today's.
+    """
+    global _data_stamp
+    stat = data.SNAPSHOT_PATH.stat()
+    stamp = (stat.st_mtime, stat.st_size)
+    if _data_stamp is not None and stamp != _data_stamp:
+        st.cache_data.clear()
+    _data_stamp = stamp
+    return _read_data(stamp)
+
+
+@st.cache_data(show_spinner="Loading prices and rates ...")
+def _read_data(stamp: tuple) -> pd.DataFrame:
     return load_all_data()
 
 
@@ -246,7 +268,7 @@ def load_pair_hunt(quiet: bool = False) -> dict | None:
 @st.cache_data(show_spinner=False)
 def _read_pair_hunt(paths: tuple[str, ...], stamps: tuple[float, ...]) -> dict:
     files = dict(zip(PAIR_HUNT_FILES, paths))
-    out = {key: pd.read_csv(files[key]) for key in ("hindsight", "rivals", "mined", "luck")}
+    out = {key: pd.read_csv(files[key], comment="#") for key in ("hindsight", "rivals", "mined", "luck")}
     out["daily"] = pd.read_csv(files["daily"], parse_dates=["date"])
     out["selections"] = pd.read_csv(files["selections"], parse_dates=["trading_start", "trading_end"])
     out["windows"] = pd.read_csv(files["windows"], parse_dates=["trading_start", "trading_end"])
@@ -308,6 +330,21 @@ def fmt_money(x: float, currency: str = "$") -> str:
 def escape_dollars(text: str) -> str:
     """Escape "$" for st.markdown/st.caption, which read text between two "$" as LaTeX."""
     return text.replace("$", "\\$")
+
+
+def md(text: str) -> None:
+    """Markdown with "$" escaped, so dollar amounts aren't read as maths."""
+    st.markdown(escape_dollars(text))
+
+
+def usd(x: float) -> str:
+    """A price to the cent: $94.08."""
+    return f"${x:,.2f}"
+
+
+def day(ts: pd.Timestamp, long_month: bool = False) -> str:
+    """'31 Jan 2025', or '31 January 2025' with long_month."""
+    return f"{ts.day} {ts:%B %Y}" if long_month else f"{ts.day} {ts:%b %Y}"
 
 
 def fmt_num(x: float, decimals: int = 2) -> str:
@@ -589,15 +626,22 @@ def chapter_heading(numeral: str, title: str, subtitle: str) -> None:
         f'<p class="chapter-subtitle">{subtitle}</p>'
         '<hr class="chapter-rule">'
     )
-    data_source_note()
+    data_as_of_note()
 
 
-def data_source_note() -> None:
-    """Say so when the live download failed and the committed snapshot is in use."""
-    snapshot_date = get_data().attrs.get("snapshot_date")
-    if snapshot_date:
-        note(f"Using saved data to {pd.Timestamp(snapshot_date):%d %B %Y}: the live price "
-             "download is unavailable on this server.", "warning")
+def data_as_of() -> pd.Timestamp:
+    """The last close in the committed data snapshot: the dashboard's single as-of date."""
+    return pd.Timestamp(get_data().attrs["snapshot_date"])
+
+
+def data_as_of_note() -> None:
+    """One as-of line under every chapter heading, and a warning if the data is old."""
+    last = data_as_of()
+    st.caption(f"Data as of {last.day} {last:%B %Y}, refreshed automatically each weekday.")
+    today = pd.Timestamp.now(tz="America/New_York").tz_localize(None)
+    if is_stale(last, today):
+        note(f"The data may be stale: the last close is {(today.normalize() - last).days} days old. "
+             "The scheduled refresh may have failed; see the repository's Actions tab.", "warning")
 
 
 NOTE_KINDS = ("info", "warning", "error")
@@ -656,25 +700,7 @@ def footer(lead: str = "Educational project. Not investment advice.") -> None:
 # --------------------------------------------------------------------------- #
 # Numbers shared by The Story and The Twist
 # --------------------------------------------------------------------------- #
-def snb_carry(carry_only: pd.DataFrame) -> dict:
-    """The SNB day against the carry it took to earn, for a carry-only result frame.
-
-    Returns the event_impact dict plus: loss (CHF, positive), avg_before / avg_all
-    (average daily carry income before the SNB day / over the whole sample) and
-    years_before / years_all (years of that carry the day wiped out; NaN when the
-    average carry is not positive, because then there were no gains to wipe out).
-    """
-    impact = event_impact(carry_only, SNB_NEXT_ROW)
-    income = (carry_only["usd_interest_chf"] + carry_only["chf_interest_chf"]).iloc[1:]
-    avg_before = income.loc[: pd.Timestamp(SNB_DATE) - pd.Timedelta(days=1)].mean()
-    avg_all = income.mean()
-    loss = abs(impact["total_dE"])
-
-    def years(avg: float) -> float:
-        return loss / (avg * TRADING_DAYS) if avg > 0 else float("nan")
-
-    return {**impact, "loss": loss, "avg_before": avg_before, "avg_all": avg_all,
-            "years_before": years(avg_before), "years_all": years(avg_all)}
+snb_carry = carry_snb_carry  # pure calculation, lives in carry.py (also used by the README block)
 
 
 def headline_numbers() -> dict:
@@ -703,9 +729,10 @@ def short_version() -> None:
     """The project in four numbers, for readers with no finance background."""
     n = headline_numbers()
     ret, trd, carry, snb = n["returns"], n["trades"], n["carry"], n["snb"]
-    direction = "lost" if ret["total_return"] < 0 else "made"
-    wins_vs_losses = ("but its losses were bigger than its wins" if abs(trd["avg_loss"]) > trd["avg_win"]
-                      else "and its wins were bigger than its losses")
+    direction = wording.made_or_lost(ret["total_return"])
+    edge = trd["avg_win"] - abs(trd["avg_loss"])  # > 0 when wins are bigger than losses
+    sizes = "its wins were bigger than its losses" if edge > 0 else "its losses were bigger than its wins"
+    wins_vs_losses = f"{wording.contrast(trd['win_rate'], edge)} {sizes}"
 
     items = [
         ("Overall result", fmt_pct(ret["total_return"], sign=True), None,
@@ -724,7 +751,8 @@ def short_version() -> None:
         ))
     items.append((
         "The Swiss franc twist", fmt_money(carry.iloc[-1], "CHF"), None,
-        f"Borrowing cheap francs earned {fmt_money(carry.iloc[-1], 'CHF')} in total. "
-        f"One morning in {pd.Timestamp(SNB_DATE):%B %Y} cost {fmt_money(snb['loss'], 'CHF')}.",
+        f"Borrowing cheap francs {wording.earned_or_cost(carry.iloc[-1])} "
+        f"{fmt_money(abs(carry.iloc[-1]), 'CHF')} in total. One morning in {pd.Timestamp(SNB_DATE):%B %Y} "
+        f"{'cost' if snb['total_dE'] < 0 else 'added'} {fmt_money(abs(snb['total_dE']), 'CHF')}.",
     ))
     kpi_row(items)

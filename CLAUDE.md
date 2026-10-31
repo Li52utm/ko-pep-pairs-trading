@@ -176,7 +176,7 @@ hedge_chf = -A_{t-1} * (S_t - F_t)
 3. Twist unhedged: strategy + carry.
 4. Twist hedged.
 
-`event_impact(result, date)` gives one day's attribution (used for 2015-01-15, SNB removes the
+`event_impact(result, date)` gives one day's attribution (used for 2015-01-16, the first FX bar after the SNB removed the
 EUR/CHF floor). `summary(result)` gives total CHF P&L, its split by component, and the worst day.
 
 ## Pair Hunt (implemented in `src/universe.py` and `src/pair_hunt.py`)
@@ -203,8 +203,8 @@ Run with `.venv\Scripts\python src\pair_hunt.py` (about 7 minutes); it writes `r
   - `luck_baseline`: fake stocks made by bootstrapping each ticker's daily log returns
     independently (with replacement), rebuilt into prices on the real dates. Each keeps its
     volatility and fat tails; every link between stocks is destroyed. Records the best and
-    10th-best Sharpe of the data-mined leaderboard per simulation. `run_all` times one simulation
-    and picks `n_sims` to fit a 5-minute budget (at least 10). Cross-check: `expected_max_sharpe`,
+    10th-best Sharpe of the data-mined leaderboard per simulation. `run_all` uses a fixed
+    `LUCK_SIMS = 20` (seed 42), so the result is reproducible on any machine. Cross-check: `expected_max_sharpe`,
     sqrt(2 ln N) / sqrt(years), which assumes independent strategies and so overstates N for
     pairs that share tickers. -> `pair_hunt_luck.csv`
   - `walk_forward`: non-overlapping 126-day trading windows once 252 days exist. Pairs are ranked
@@ -247,6 +247,15 @@ the fix, and the before/after numbers.
   chosen config and its 0.64 / -0.67 unchanged, rank correlation -0.26 -> -0.23, positive test
   Sharpes 5 -> 7 of 108.
 
+- **2026-10-31, equity calendar.** Wrong: `load_all_data` inner-joined the equities with USD/CHF,
+  dropping 9 US trading days (no Yahoo FX bar) from the KO/PEP strategy, so chapters I-V and the
+  Pair Hunt ran on different calendars (111 vs 114 trades). Why: the equity sample must not depend
+  on an unrelated FX quote. Fix: the calendar is every day both stocks trade; `usdchf` is
+  left-joined and forward-filled only inside the carry (`carry.fx_on_equity_days`); snapshot,
+  research and pair hunt regenerated. Before -> after: trades 111 -> 114, win rate 50.5% -> 50.9%,
+  total return -12.6% -> -12.7%, Sharpe -0.133 -> -0.134, chosen config unchanged with train/test
+  Sharpe 0.64/-0.67 -> 0.65/-0.67, rank correlation -0.23 -> -0.32, positive test Sharpes 7 -> 6 of 108.
+
 ## Known limitations
 
 - **FX timing:** Yahoo's daily `CHF=X` bars close earlier than the US equity close, so `usdchf`
@@ -260,6 +269,12 @@ the fix, and the before/after numbers.
   simplification for margin cash, which in practice earns a broker rate below T-bills.
 - **Day count:** both currencies accrue ACT/360 on calendar days. DTB3 is quoted on a discount
   basis and the Swiss rate is a monthly average, so accruals are close approximations, not exact.
+- **Rate publication lags:** FRED publishes the US T-bill rate (DTB3) with a lag of about one
+  business day, and the Swiss 3-month rate (IR3TIB01CHM156N, an OECD monthly average) can appear
+  more than a month after the month it covers. The carry accrues on the previous day's rate and the
+  Swiss series is shifted by one month, so a rate could occasionally be used slightly before it was
+  published. The effect on results is negligible (interest accrues slowly), but it is not a strict
+  point-in-time data set.
 - **Borrow spread:** the CHF loan costs the Swiss 3-month rate + a flat spread (default 0.25% p.a.).
   The real spread depends on the borrower; negative-rate loans (2015-2022) were not available
   to everyone, hence the optional floor at 0.
@@ -268,7 +283,9 @@ the fix, and the before/after numbers.
 
 Handled by `src/data.py` via `load_all_data(start, end)`, which returns a DataFrame with
 columns `KO, PEP, usdchf, usd_3m, chf_3m` (yfinance + FRED, cached in `data/`).
-Prices are never forward-filled; only rates are.
+Prices are never forward-filled; only rates are. The calendar is the US equity calendar (every
+day on which both KO and PEP trade); `usdchf` is left-joined and is NaN on the few days Yahoo has
+no FX bar, and only the carry module forward-fills it (`carry.fx_on_equity_days`).
 
 Deployment fallback: `load_all_data` and `universe.load_universe` try the cache, then a live
 download, then the committed snapshots `results/data_snapshot.csv` / `results/universe_snapshot.csv`
@@ -333,6 +350,15 @@ changed `results/` files afterwards.
   backs out each call's implied volatility from its own mid (`implied_vol`, Black-Scholes with
   scipy `brentq`); Yahoo's `impliedVolatility` is only shown for comparison. Interest on short-sale
   proceeds is ignored, as in the backtest.
+- Every sentence that states a verdict (made/lost, but/and, "no better than luck", "did not beat
+  cash", "worth it") is built by a pure function in `src/wording.py`, so it follows the numbers;
+  `tests/test_wording.py` flips each sign. Never type a conclusion or a parameter value into page
+  text: format it from the `src/` constants (e.g. `pair_hunt.MAX_PVALUE`, `options.CONTRACT_SIZE`,
+  `carry.SNB_DATE`). Shared text helpers: `ui.md`, `ui.usd`, `ui.day`.
+- Tests never touch the network: `tests/conftest.py` makes every download raise and provides the
+  `snapshot_prices` / `snapshot_universe` fixtures (the committed snapshots).
+  `tests/test_app.py` runs every chapter through `app.py` with AppTest, offline, plus the
+  missing-option-snapshot and zero-bid-chain cases.
 - The Story is written for readers with no finance background: plain English, short sentences,
   one chart per section, every number generated live. Its "Read on" links need `st.navigation`,
   so test it through `app.py`, not on its own. Pages and `ui.py` only cache, format and plot; strategy logic stays in the

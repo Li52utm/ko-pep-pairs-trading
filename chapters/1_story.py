@@ -17,6 +17,7 @@ import plotly.graph_objects as go  # noqa: E402
 import streamlit as st  # noqa: E402
 
 import ui  # noqa: E402
+import wording  # noqa: E402
 from carry import SNB_DATE  # noqa: E402
 from research import GRID, TEST_START, TRAIN_END, TRAIN_START  # noqa: E402
 
@@ -25,9 +26,7 @@ STOP = ui.SIGNAL_DEFAULTS["stop"]
 CONTEXT_DAYS = 15  # trading days shown either side of a trade (about three weeks)
 
 
-def md(text: str) -> None:
-    """Markdown with "$" escaped, so dollar amounts aren't read as maths."""
-    st.markdown(ui.escape_dollars(text))
+md = ui.md
 
 
 def share_phrase(p: float) -> str:
@@ -42,7 +41,7 @@ def share_phrase(p: float) -> str:
 
 
 def day(ts: pd.Timestamp) -> str:
-    return f"{ts.day} {ts:%B %Y}"
+    return ui.day(ts, long_month=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -246,11 +245,9 @@ else:
 # --------------------------------------------------------------------------- #
 ui.section_heading("vi", "The scoreboard")
 win_rate, avg_win, avg_loss = trd["win_rate"], trd["avg_win"], abs(trd["avg_loss"])
-result = "lost" if ret["total_return"] < 0 else "made"
 md(
-    f"The strategy won {ui.fmt_pct(win_rate)} of its {trd['n_trades']} trades, "
-    f"but {result} {ui.fmt_pct(abs(ret['total_return']))} overall. "
-    f"The average win was {ui.fmt_money(avg_win)}; the average loss was {ui.fmt_money(avg_loss)}."
+    wording.win_rate_sentence(win_rate, trd["n_trades"], ret["total_return"])
+    + f" The average win was {ui.fmt_money(avg_win)}; the average loss was {ui.fmt_money(avg_loss)}."
 )
 if avg_loss > avg_win:
     # The same game in pounds, scaled down by 1,000, with the real win rate.
@@ -318,12 +315,14 @@ md(
 )
 md(
     f"On {day(pd.Timestamp(SNB_DATE))} the Swiss central bank stopped holding the franc down. "
-    f"By the next close a dollar bought {ui.fmt_pct(abs(snb['S_change_pct']))} fewer francs, "
-    f"so the franc loan of {ui.fmt_money(loan, 'CHF')} suddenly cost far more to repay. "
-    f"The trade lost **{ui.fmt_money(snb['loss'], 'CHF')}** that day."
+    f"By the next close {wording.fx_move_phrase(snb['S_change_pct'])}, "
+    f"so the franc loan of {ui.fmt_money(loan, 'CHF')} "
+    + ("suddenly cost far more to repay. " if snb["S_change_pct"] < 0 else "became cheaper to repay. ")
+    + f"The trade {wording.gained_or_lost(snb['total_dE'])} **{ui.fmt_money(abs(snb['total_dE']), 'CHF')}** "
+    "that day."
 )
 if snb["avg_before"] < 0:
-    md("Before 2015, after the borrow cost, the carry was slightly negative. "
+    md(f"Before {pd.Timestamp(SNB_DATE).year}, after the borrow cost, the carry was slightly negative. "
        "For years you were paying to hold this trade, then it suffered a large loss anyway.")
 # Prefer the carry earned before the shock; it was negative in some settings, so fall back
 # to the whole-period average (see The Twist for both).
@@ -339,34 +338,18 @@ ui.kpi_row([("Years of average interest income wiped out in one morning",f"{year
 # ix. What I learned
 # --------------------------------------------------------------------------- #
 ui.section_heading("ix", "What I learned")
-lessons = [
-    f"**Win rate isn't the score that matters.** The strategy won {ui.fmt_pct(win_rate)} of its "
-    f"trades and still {result} {ui.fmt_pct(abs(ret['total_return']))}.",
-]
+lessons = [wording.win_rate_lesson(win_rate, ret["total_return"])]
 if chosen is not None:
     grid = ui.load_research()[0]
     n_positive = int((grid["test_sharpe"] > 0).sum())
-    lessons.append(
-        "**Testing on data you didn't tune on is the only test that counts.** The best practice "
-        f"score of {chosen['train_sharpe']:.2f} became {chosen['test_sharpe']:.2f}, and only "
-        f"{n_positive} of {len(GRID)} settings made money on the new exam."
-    )
-lessons.append(
-    "**Steady small gains can hide a rare big loss.** Borrowing francs earned "
-    f"{ui.fmt_money(numbers['carry'].iloc[-1], 'CHF')} over {numbers['years']:.0f} years; "
-    f"one morning cost {ui.fmt_money(snb['loss'], 'CHF')}."
-)
+    lessons.append(wording.honesty_lesson(chosen["train_sharpe"], chosen["test_sharpe"], n_positive, len(GRID)))
+lessons.append(wording.carry_lesson(numbers["carry"].iloc[-1], snb["total_dE"], numbers["years"]))
 hunt = ui.load_pair_hunt(quiet=True)  # results/pair_hunt_*; the lesson is skipped without them
 if hunt is not None:
-    n_mined = hunt["summary"]["sample"]["n_mined_pairs"]
     best = hunt["mined"].iloc[0]
     n_beaten = int((hunt["luck"]["best_sharpe"] < best["sharpe"]).sum())
-    lessons.append(
-        f"**A bigger search finds better-looking accidents.** The best of {n_mined} pairs "
-        f"({best['pair']}, Sharpe {best['sharpe']:.2f}) was no better than the best pair found "
-        f"among random stocks with no real link: it beat the best random pair in only "
-        f"{n_beaten} of {len(hunt['luck'])} trials."
-    )
+    lessons.append(wording.luck_lesson(hunt["summary"]["sample"]["n_mined_pairs"], best["pair"],
+                                       best["sharpe"], n_beaten, len(hunt["luck"])))
 md("\n".join(f"- {lesson}" for lesson in lessons))
 
 

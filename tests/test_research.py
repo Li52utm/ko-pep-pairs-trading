@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from data import load_all_data
 from research import (
     DEFAULT_PARAMS, GRID, PARAM_NAMES, PERIOD_END, TEST_START, TRAIN_END, TRAIN_START,
     run_grid, run_period, select_params, signal_kwargs,
@@ -15,8 +14,8 @@ from signals import compute_signals
 
 
 @pytest.fixture(scope="module")
-def prices() -> pd.DataFrame:
-    return load_all_data()
+def prices(snapshot_prices: pd.DataFrame) -> pd.DataFrame:
+    return snapshot_prices  # committed snapshot (conftest.py): deterministic, no network
 
 
 def test_grid_has_108_unique_combinations() -> None:

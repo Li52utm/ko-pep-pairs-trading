@@ -18,7 +18,6 @@ import json
 import time
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
@@ -89,15 +88,16 @@ def signal_kwargs(params: dict) -> dict:
     }
 
 
-def _restrict_to_period(sig: pd.DataFrame) -> pd.DataFrame:
+def _restrict_to_period(sig: pd.DataFrame, execution_lag: int = 1) -> pd.DataFrame:
     """Make a sliced signals frame start flat and end flat.
 
     - Start: a trade opened before the period would otherwise be "entered"
       mid-way on day 2. Those leftover days are set to 0, so the period only
       trades signals that begin inside it.
-    - End: signal = 0 on the last 2 days, so any open trade is closed at the
-      last close of the period (position on day t = signal on day t-1).
-      Those forced closes are labelled "period_end".
+    - End: signal = 0 on the last (execution_lag + 1) days, so any open trade is
+      closed by the last close of the period (position on day t = signal on day
+      t - execution_lag; 2 days with the default lag of 1). Those forced closes
+      are labelled "period_end".
     """
     sig = sig.copy()
     signal = sig["signal"].to_numpy().copy()
@@ -109,10 +109,11 @@ def _restrict_to_period(sig: pd.DataFrame) -> pd.DataFrame:
         inherited += 1
     signal[:inherited] = 0
 
-    # Forced exit: a trade held into the second-to-last day is closed there.
-    if len(signal) >= 3 and signal[-3] != 0 and signal[-2] != 0:
-        exit_type[-2] = PERIOD_END
-    signal[-2:] = 0
+    # Forced exit: a trade still held on the first forced-flat day is closed there.
+    flat_days = execution_lag + 1
+    if len(signal) > flat_days and signal[-flat_days - 1] != 0 and signal[-flat_days] != 0:
+        exit_type[-flat_days] = PERIOD_END
+    signal[-flat_days:] = 0
 
     sig["signal"] = signal
     sig["exit_type"] = exit_type
@@ -130,7 +131,7 @@ def run_period(
 
     period = slice(pd.Timestamp(start), pd.Timestamp(end) if end else None)
     period_prices = prices.loc[period]
-    period_signals = _restrict_to_period(signals.loc[period])
+    period_signals = _restrict_to_period(signals.loc[period], backtest_params.get("execution_lag", 1))
 
     daily, trades = run_backtest(period_prices, period_signals, **backtest_params)
     capital = backtest_params.get("capital", DEFAULT_CAPITAL)
@@ -327,5 +328,5 @@ if __name__ == "__main__":
     print(costs.to_string(index=False, formatters={"net_pnl": "{:,.0f}".format,
                                                    "sharpe": "{:.2f}".format}))
 
-    print(f"\nSaved results/grid.csv, results/selected.json, results/cost_sensitivity.csv")
+    print("\nSaved results/grid.csv, results/selected.json, results/cost_sensitivity.csv")
     print(f"Runtime: {time.perf_counter() - started:.1f}s")

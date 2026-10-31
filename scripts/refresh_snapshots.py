@@ -1,71 +1,102 @@
-"""Refresh every committed snapshot and result file, in dependency order.
+"""Refresh every committed snapshot and result file (the scheduled data pipeline).
 
 Run from the project root:
     .venv\\Scripts\\python scripts\\refresh_snapshots.py      (Windows)
     .venv/bin/python scripts/refresh_snapshots.py           (macOS / Linux)
+The GitHub Action .github/workflows/refresh-data.yml runs it each weekday at 22:30 UTC.
 
 Steps:
-    1. Prices and rates   -> results/data_snapshot.csv      (data.load_all_data, live only)
-    2. Pair universe      -> results/universe_snapshot.csv  (universe.load_universe, live only)
-    3. Research grid      -> results/grid.csv, selected.json, cost_sensitivity.csv
-    4. Pair Hunt          -> results/pair_hunt_*            (about 7 minutes)
-    5. Option chains      -> results/options_snapshot_<KO|PEP>.csv and options_dividends_*.csv
-
-Steps 1-2 never fall back to the old snapshot: if Yahoo or FRED is unavailable
-the script stops, so a snapshot is never rewritten from itself. Commit the
-changed results/ files afterwards; the dashboard reads them as they are.
+    1. Download, into a fresh temporary cache so nothing stale is reused:
+       prices and rates (data.download_all_data), the 40-stock universe
+       (universe.download_universe), and the KO and PEP option chains.
+    2. Check every download (src/pipeline.py): not empty, not fewer rows than the
+       committed snapshot, no missing stock prices, not every option bid zero.
+       If ANY download fails or any check fails, stop with an error and write nothing.
+    3. Write results/data_snapshot.csv, results/universe_snapshot.csv and the option
+       snapshots, then re-run src/research.py and src/pair_hunt.py (which read the new
+       snapshots) and regenerate the README auto-block (scripts/update_readme.py).
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import pandas as pd  # noqa: E402
 
 import data  # noqa: E402
 import options  # noqa: E402
+import pipeline  # noqa: E402
 import universe  # noqa: E402
 
 OPTION_TICKERS = ("KO", "PEP")  # either can be the short leg of today's trade
 
 
-def step(label: str, func) -> None:
+def previous(path: Path) -> pd.DataFrame | None:
+    return pd.read_csv(path, index_col=0, parse_dates=True) if path.exists() else None
+
+
+def download_everything() -> dict:
+    """All downloads, checked. Raises (and nothing has been written) on any failure."""
+    with tempfile.TemporaryDirectory() as cache:
+        data.DATA_DIR = Path(cache)  # always a fresh download, never a stale local cache
+        print("Downloading prices and rates ...")
+        prices = data.download_all_data()
+        pipeline.check_prices(prices, previous(data.SNAPSHOT_PATH))
+        print(f"   {len(prices)} rows to {prices.index[-1].date()}")
+
+        print("Downloading the 40-stock universe ...")
+        uni = universe.download_universe()
+        pipeline.check_universe(uni, previous(universe.SNAPSHOT_PATH), universe.universe_tickers())
+        print(f"   {uni.shape[1]} tickers, {len(uni)} rows to {uni.index[-1].date()}")
+
+    chains = {}
+    for ticker in OPTION_TICKERS:
+        print(f"Downloading the {ticker} option chain ...")
+        chain, dividends = options.fetch_chain(ticker)
+        pipeline.check_option_chain(ticker, chain)
+        chains[ticker] = (chain, dividends)
+        print(f"   {len(chain)} quotes, expiry {chain['expiry'].iloc[0]}")
+    return {"prices": prices, "universe": uni, "chains": chains}
+
+
+def write_snapshots(downloads: dict) -> None:
+    downloads["prices"].to_csv(data.SNAPSHOT_PATH)
+    downloads["universe"].to_csv(universe.SNAPSHOT_PATH)
+    for ticker, (chain, dividends) in downloads["chains"].items():
+        options.save_snapshot(ticker, chain, dividends)
+    print(f"Snapshots written: {data.SNAPSHOT_PATH.name}, {universe.SNAPSHOT_PATH.name}, "
+          f"options for {', '.join(downloads['chains'])}")
+
+
+def run_script(path: Path) -> None:
     started = time.perf_counter()
-    print(f"\n== {label}")
-    func()
+    print(f"Running {path.relative_to(ROOT)} ...")
+    subprocess.run([sys.executable, str(path)], cwd=ROOT, check=True)
     print(f"   done in {time.perf_counter() - started:.0f}s")
 
 
-def refresh_prices() -> None:
-    prices = data.load_all_data(allow_snapshot=False)
-    prices.to_csv(data.SNAPSHOT_PATH)
-    print(f"   {len(prices)} rows to {prices.index[-1].date()} -> {data.SNAPSHOT_PATH.name}")
+def main() -> int:
+    try:
+        downloads = download_everything()
+    except Exception as error:  # any download or check failure: write nothing
+        print(f"\nREFRESH ABORTED, nothing written: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
 
-
-def refresh_universe() -> None:
-    prices = universe.load_universe(allow_snapshot=False)
-    prices.to_csv(universe.SNAPSHOT_PATH)
-    print(f"   {prices.shape[1]} tickers to {prices.index[-1].date()} -> {universe.SNAPSHOT_PATH.name}")
-
-
-def run_script(name: str) -> None:
-    subprocess.run([sys.executable, str(ROOT / "src" / name)], cwd=ROOT, check=True)
-
-
-def refresh_options() -> None:
-    for ticker in OPTION_TICKERS:
-        chain = options.refresh_snapshot(ticker)
-        print(f"   {ticker}: {len(chain)} quotes, expiry {chain['expiry'].iloc[0]}")
+    write_snapshots(downloads)
+    run_script(ROOT / "src" / "research.py")
+    run_script(ROOT / "src" / "pair_hunt.py")
+    run_script(ROOT / "scripts" / "update_readme.py")
+    print(f"\nRefresh complete: data as of {downloads['prices'].index[-1].date()}.")
+    return 0
 
 
 if __name__ == "__main__":
-    step("1. Prices and rates", refresh_prices)
-    step("2. Pair universe", refresh_universe)
-    step("3. Research grid (src/research.py)", lambda: run_script("research.py"))
-    step("4. Pair Hunt (src/pair_hunt.py)", lambda: run_script("pair_hunt.py"))
-    step("5. Option chains", refresh_options)
-    print("\nAll snapshots refreshed. Review and commit the changed files in results/.")
+    sys.exit(main())

@@ -18,6 +18,7 @@ import streamlit as st  # noqa: E402
 from plotly.subplots import make_subplots  # noqa: E402
 
 import ui  # noqa: E402
+import wording  # noqa: E402
 from carry import DAY_COUNT, SNB_DATE, SNB_NEXT_ROW  # noqa: E402
 from research import TRAIN_END, TRAIN_START  # noqa: E402
 
@@ -205,7 +206,7 @@ st.caption(f"Average rate differential over the sample: {differential.mean():.2f
 # --------------------------------------------------------------------------- #
 # f) One morning in January 2015
 # --------------------------------------------------------------------------- #
-st.header("One morning in January 2015")
+st.header(f"One morning in {pd.Timestamp(SNB_DATE):%B %Y}")
 impact = ui.snb_carry(carry_only)  # the day's attribution plus years of carry it erased
 avg_before, avg_all = impact["avg_before"], impact["avg_all"]
 
@@ -239,7 +240,7 @@ with st.container():
             f"morning cost **{impact['years_all']:.1f} years of carry**."
         )
     st.caption(f"The SNB announced at 10:30 CET on {pd.Timestamp(SNB_DATE):%d %B %Y}. Yahoo's daily "
-               f"bar dated the {pd.Timestamp(SNB_DATE):%d}th predates it, so the move appears on "
+               f"bar dated {pd.Timestamp(SNB_DATE).day} {pd.Timestamp(SNB_DATE):%B} predates it, so the move appears on "
                f"{snb:%d %B}.")
 
 
@@ -265,9 +266,11 @@ else:
                 "(no borrow spread here: hedge cash earns no interest and the strategy's own "
                 "daily P&L is unhedged)")
 st.markdown(
-    f"Unhedged, the twist made {ui.fmt_money(unhedged_s['total_chf'], 'CHF')} with a worst day of "
+    f"Unhedged, the twist {wording.made_or_lost(unhedged_s['total_chf'])} "
+    f"{ui.fmt_money(abs(unhedged_s['total_chf']), 'CHF')} with a worst day of "
     f"{ui.fmt_money(unhedged_s['worst_day_chf'], 'CHF')} ({unhedged_s['worst_day']:%d %b %Y}); "
-    f"hedged, it made {ui.fmt_money(hedged_s['total_chf'], 'CHF')} with a worst day of "
+    f"hedged, it {wording.made_or_lost(hedged_s['total_chf'])} "
+    f"{ui.fmt_money(abs(hedged_s['total_chf']), 'CHF')} with a worst day of "
     f"{ui.fmt_money(hedged_s['worst_day_chf'], 'CHF')} ({hedged_s['worst_day']:%d %b %Y}). "
     "Hedging removes the FX risk **and** the carry: what's left is the strategy "
     f"({ui.fmt_money(strategy_total, 'CHF')}) {gap_text}."
@@ -288,15 +291,9 @@ st.markdown(
     "high-yielders has earned money on average. **CHF is the exception:** it is a safe haven "
     "that strengthens exactly when markets are stressed, which is when a carry trade hurts most.\n"
     f"- **Skew:** the carry-only daily CHF P&L has a skewness of **{skew:.1f}**. "
-    + ("Negative skew means small steady gains and rare large losses: "
-       "*picking up pennies in front of a steamroller*.\n" if skew < 0 else
-       "In this sample it is not negatively skewed, unlike a typical carry trade.\n")
-    + f"- **Uncovered interest parity roughly held:** over {start:%Y}-{end:%Y} the carry earned "
-    f"{ui.fmt_money(carry_earned, 'CHF')} and the FX move cost "
-    f"{ui.fmt_money(carry_parts['fx_chf'], 'CHF')}, leaving "
-    f"{ui.fmt_money(summaries['carry only']['total_chf'], 'CHF')} "
-    f"({ui.fmt_pct(summaries['carry only']['total_chf'] / L0)} of the loan over "
-    f"{(end - start).days / 365.25:.0f} years)."
+    + wording.skew_sentence(skew) + "\n"
+    + "- " + wording.uip_sentence(carry_earned, carry_parts["fx_chf"], summaries["carry only"]["total_chf"],
+                                  L0, (end - start).days / 365.25, start.year, end.year)
 )
 
 
@@ -305,3 +302,5 @@ st.markdown(
 # --------------------------------------------------------------------------- #
 with st.expander("Assumptions and limitations"):
     st.markdown(ui.known_limitations())
+
+ui.footer()

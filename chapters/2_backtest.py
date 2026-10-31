@@ -381,3 +381,5 @@ with st.expander("How the maths works"):
              r"N_{PEP} = \frac{-d\,\beta\,G}{1 + |\beta|}")
     st.markdown("**Costs:** transaction cost (bps per leg, per side) on traded notional at entry "
                 "and exit; borrow cost = |short notional| × borrow rate / 252 per day.")
+
+ui.footer()

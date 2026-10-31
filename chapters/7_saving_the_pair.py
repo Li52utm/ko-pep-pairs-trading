@@ -1,7 +1,7 @@
 """VII. Saving the Pair: can listed options do what the stop-loss couldn't?
 
 Reads the option snapshot saved by src/options.py (results/options_snapshot_<T>.csv);
-the "Refresh option prices" button fetches a new one. Every number comes from
+the scheduled refresh (scripts/refresh_snapshots.py) replaces it. Every number comes from
 the snapshot and the src modules.
 """
 
@@ -19,23 +19,20 @@ import plotly.graph_objects as go  # noqa: E402
 import streamlit as st  # noqa: E402
 
 import options as op  # noqa: E402
+from data import is_stale  # noqa: E402
 import trade_idea as ti  # noqa: E402
 import ui  # noqa: E402
+import wording  # noqa: E402
 
 BORROW_RATE = ui.BACKTEST_DEFAULTS["borrow_rate"]
 PAYOFF_RANGE = 0.25  # payoff chart: spot +/- 25%
+DISCLAIMER = "Illustrative only. Not investment advice."
+NEXT_REFRESH = "The next scheduled data refresh (each weekday after the US close) will replace it."
+NO_SNAPSHOT_HELP = ("It is written by the scheduled data refresh (scripts/refresh_snapshots.py); "
+                    "until then this section cannot be shown.")
 
 
-def md(text: str) -> None:
-    st.markdown(ui.escape_dollars(text))
-
-
-def usd(x: float) -> str:
-    return f"${x:,.2f}"
-
-
-def day(ts: pd.Timestamp) -> str:
-    return f"{ts.day} {ts:%b %Y}"
+md, usd, day = ui.md, ui.usd, ui.day
 
 
 def money_or_unlimited(x: float) -> str:
@@ -100,22 +97,14 @@ md("Chapter IV relied on the same no-arbitrage idea in currency markets: covered
 
 
 # --------------------------------------------------------------------------- #
-# The snapshot: shown prominently, with a refresh button
+# The snapshot: shown prominently (it is refreshed by the scheduled job, never on page load)
 # --------------------------------------------------------------------------- #
 ui.section_heading("iii", "Checking parity in today's market")
-if st.button("Refresh option prices"):
-    try:
-        with st.spinner(f"Fetching the {ticker} option chain from Yahoo Finance ..."):
-            op.refresh_snapshot(ticker)
-        st.rerun()
-    except Exception as error:  # network, Yahoo or no suitable expiry: keep the saved snapshot
-        ui.note(f"Could not fetch new option prices ({error}). Showing the saved snapshot, if any.", "error")
-
 snapshot = ui.load_options_snapshot(ticker)
 if snapshot is None:
     ui.note(f"No option snapshot is saved for {ticker} (the short leg of today's trade). "
-            "Press **Refresh option prices** above to fetch one from Yahoo Finance.", "warning")
-    ui.footer("Illustrative only. Not investment advice.")
+            f"{NO_SNAPSHOT_HELP}", "warning")
+    ui.footer(DISCLAIMER)
     st.stop()
 
 chain, dividend_history = snapshot
@@ -129,11 +118,24 @@ r = float(ui.get_data()["usd_3m"].iloc[-1]) / 100  # T-bill rate used as a conti
 
 st.html(f'<p class="desk-meta"><strong>Option snapshot: {ticker}, fetched {fetched_at:%d %B %Y, %H:%M} UTC.</strong> '
         f'Expiry {expiry:%d %B %Y} ({days} days), spot {usd(spot)} (last close).</p>')
+today = pd.Timestamp.now(tz="UTC").tz_convert(None).normalize()
+if today > expiry:
+    ui.note(f"This option snapshot is past its expiry ({day(expiry)}): these options no longer trade, "
+            f"so the prices below are historical. {NEXT_REFRESH}", "warning")
+elif is_stale(as_of, today):
+    ui.note(f"This option snapshot is {(today - as_of.normalize()).days} days old; option prices move "
+            f"quickly. {NEXT_REFRESH}", "warning")
 
 clean, drops = op.clean_quotes(chain, as_of)
 divs = op.expected_dividends(dividend_history, as_of, expiry, r)
 upcoming = op.expected_dividends(dividend_history, as_of, as_of + pd.Timedelta(days=120), r)["table"]
 calls, puts = clean[clean["type"] == "call"], clean[clean["type"] == "put"]
+if calls.empty or puts.empty or calls["strike"].isin(puts["strike"]).sum() == 0:
+    ui.note(f"The saved {ticker} option snapshot has no strike with both a usable call and a usable put "
+            f"({len(clean)} usable quotes of {len(chain)}; dropped: "
+            f"{'; '.join(f'{v} {k}' for k, v in drops.items()) or 'none'}). {NEXT_REFRESH}", "warning")
+    ui.footer(DISCLAIMER)
+    st.stop()
 table, parity = op.parity_check(calls, puts, spot, r, T, divs["pv"])
 
 n_last = int((clean["quote_type"] == op.LAST).sum())
@@ -143,10 +145,10 @@ if divs["table"].empty:
                 if not upcoming.empty else "")
     div_text = f"No dividend is projected before expiry.{next_div}"
 else:
-    div_text = (f"Projected dividends before expiry: "
+    div_text = ("Projected dividends before expiry: "
                 + ", ".join(f"{usd(a)} on {day(d)}" for d, a in zip(divs["table"]["ex_date"], divs["table"]["amount"]))
                 + f" (present value {usd(divs['pv'])}, an estimate from the last four payments).")
-md(f"{len(chain)} quotes within ±10% of spot; {len(clean)} usable ({n_last} from a last trade rather "
+md(f"{len(chain)} quotes within ±{op.STRIKE_RANGE:.0%} of spot; {len(clean)} usable ({n_last} from a last trade rather "
    f"than a bid/ask). Dropped: {drop_text}. {div_text} Interest rate: the 3-month T-bill, "
    f"{r:.2%}, used as a continuous rate (an approximation).")
 
@@ -215,8 +217,8 @@ built = op.structures(state, ticket, clean, stop_price, T, divs["pv"], borrow_ra
 A, B, C = built["A"], built["B"], built["C"]
 rounding = built["rounding"]
 n = rounding["shares_covered"]
-md(f"Today's trade is short {short_shares:,.0f} {ticker} shares per $1m (chapter V). Options trade in "
-   f"lots of 100, so all three versions use {rounding['contracts']} contracts = {n:,} shares "
+md(f"Today's trade is short {short_shares:,.0f} {ticker} shares per {ui.fmt_money(bt['capital'])} (chapter V). "
+   f"Options trade in lots of {op.CONTRACT_SIZE}, so all three versions use {rounding['contracts']} contracts = {n:,} shares "
    f"({rounding['difference']:+,.0f} shares against the ticket). The {'PEP' if ticker == 'KO' else 'KO'} "
    "leg is unchanged.")
 how = {
@@ -279,33 +281,39 @@ else:
     cmp = op.protection_vs_slippage(C["premium"], {"trades": slip_trades, "summary": execution["slippage"]},
                                     n_closed)
     hold = ui.get_summary()["trades"]["avg_holding_days"]
-    call_quote = chain[(chain["type"] == "call") & (chain["strike"] == C["strike"])].iloc[0]
+    # The cleaned quote (mid, or a flagged last trade), never the raw bid/ask.
+    call_quote = calls[calls["strike"] == C["strike"]].iloc[0]
     q = divs["pv"] / (spot * T) if T > 0 else 0.0  # projected dividends as a yield (zero if none)
     net = op.protection_net_cost(call_quote, spot, r, T, hold, shares=n, q=q)
+if slip is not None and not net["ok"]:
+    ui.note(f"The protection cost cannot be estimated from this snapshot: {net['reason']}. "
+            f"{NEXT_REFRESH}", "warning")
+elif slip is not None:
     tot, ps = net["total"], net["per_share"]
-    worth = tot["net_cost"] < cmp["expected_slippage_per_trade"]
     wt = cmp["worst_trade"]
 
+    if net["spread_known"]:
+        bought = (f"Bought at the ask ({usd(ps['premium'])}) and resold at an estimated bid of "
+                  f"{usd(ps['resale_value'])}")
+        source = f"the implied volatility backed out from its own mid of {usd(net['mid'])}"
+        split = (f"{ui.fmt_money(tot['time_decay'])} of time decay and {ui.fmt_money(tot['spread_cost'])} "
+                 "of bid/ask spread")
+    else:
+        bought = (f"Bought at its last traded price ({usd(ps['premium'])}, no bid/ask in this snapshot) and "
+                  f"resold at an estimated {usd(ps['resale_value'])}")
+        source = f"the implied volatility backed out from that last trade of {usd(net['mid'])}"
+        split = (f"{ui.fmt_money(tot['time_decay'])} of time decay; the bid/ask spread is unknown, so the "
+                 "true cost is higher")
     md(f"The call is not held to expiry: it is sold back when the trade closes, on average after "
-       f"{hold:.0f} trading days. Bought at the ask ({usd(ps['premium'])}) and resold at an estimated bid "
-       f"of {usd(ps['resale_value'])} (Black-Scholes at {net['implied_vol']:.1%}, the implied volatility "
-       f"backed out from its own mid of {usd(net['mid'])}, with the same spot and less time; Yahoo "
-       f"reports {net['yahoo_implied_vol']:.1%}), the protection costs **{ui.fmt_money(tot['net_cost'])} net**: "
-       f"{ui.fmt_money(tot['time_decay'])} of time decay and {ui.fmt_money(tot['spread_cost'])} of "
-       f"bid/ask spread, against {ui.fmt_money(tot['premium'])} paid up front.")
+       f"{hold:.0f} trading days. {bought} (Black-Scholes at {net['implied_vol']:.1%}, {source}, with "
+       f"the same spot and less time; Yahoo reports {net['yahoo_implied_vol']:.1%}), the protection "
+       f"costs **{ui.fmt_money(tot['net_cost'])} net**: {split}, against {ui.fmt_money(tot['premium'])} "
+       "paid up front.")
     md(f"Historically a stop gave up {ui.fmt_money(cmp['avg_slippage'])} beyond its level, and "
        f"{cmp['n_stops']} of {n_closed} trades hit the stop, so the expected slippage per trade is about "
        f"{ui.fmt_money(cmp['expected_slippage_per_trade'])}. "
-       + (f"**On expected value, the protection is worth it:** its net cost is below the slippage it "
-          "would be expected to save."
-          if worth else
-          f"**On expected value, the protection is not worth it:** its net cost is "
-          f"{tot['net_cost'] / cmp['expected_slippage_per_trade']:.1f} times the expected slippage per "
-          f"trade{' and more than the average slippage on a stop' if tot['net_cost'] > cmp['avg_slippage'] else ''}.")
-       + f" What it buys is the tail: the worst trade in the backtest, opened on "
-       f"{day(wt['entry_date'])}, realised {ui.fmt_money(wt['realised'])}, while structure C caps the loss "
-       f"on the {ticker} leg at {ui.fmt_money(C['max_loss'])} however far the price gaps. That matters "
-       "when a desk has hard risk limits, even if the cover costs more than it saves on average.")
+       + wording.protection_verdict(tot["net_cost"], cmp["expected_slippage_per_trade"], cmp["avg_slippage"])
+       + " " + wording.tail_sentence(wt["realised"], C["max_loss"], day(wt["entry_date"]), ticker))
 
     labels = ["Protection, net cost", "Expected slippage per trade", "Average slippage per stop"]
     fig = go.Figure()
@@ -364,4 +372,4 @@ md("\n".join(f"- {line}" for line in [
     "a large order would move these prices.",
 ]))
 
-ui.footer("Illustrative only. Not investment advice.")
+ui.footer(DISCLAIMER)

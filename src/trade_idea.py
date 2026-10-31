@@ -18,7 +18,9 @@ import pandas as pd
 
 from backtest import entry_shares, gross_notional, short_notional
 from research import DEFAULT_PARAMS, find_combo
-from signals import half_life, rolling_cointegration_pvalue
+from statsmodels.tsa.stattools import coint
+
+from signals import half_life
 
 # Default thresholds, matching compute_signals' defaults.
 ENTRY = 2.0
@@ -26,6 +28,7 @@ EXIT = 0.5
 STOP = 3.5
 
 BETA_LOOKBACK_DAYS = 126  # about 6 months, for the "is beta stable?" range
+ANALOGUE_TOLERANCE = 0.5  # |z| within this of today's counts as a similar past trade
 
 # Conviction rules (see conviction). Written once here so the page can quote them.
 LEVELS = ("Low", "Medium", "High")
@@ -63,7 +66,8 @@ def current_state(
     Returns a dict with the as-of date, last prices, the rolling fair-value
     parameters (alpha, beta, resid_std), z-score, position and, when in a trade,
     its signal day, days held, the z-score on that day and today's frozen-at-entry
-    z_trade. Also the latest rolling cointegration p-value, the full-sample
+    z_trade. Also the Engle-Granger cointegration p-value on the last coint_window
+    days (with the window end date), the full-sample
     half-life and the range of beta over the last ~6 months.
     """
     last = signals.index[-1]
@@ -84,7 +88,11 @@ def current_state(
         entry_z = float(signals["zscore"].iloc[start])
 
     recent_beta = signals["beta"].iloc[-BETA_LOOKBACK_DAYS:].dropna()
-    coint = rolling_cointegration_pvalue(prices, window=coint_window).dropna()
+    # Engle-Granger on exactly the last `coint_window` days, ending at the last close
+    # (the rolling version is only recomputed every 21 days, so it can be stale).
+    window = prices[["KO", "PEP"]].iloc[-coint_window:]
+    coint_pvalue = (float(coint(np.log(window["KO"]), np.log(window["PEP"]))[1])
+                    if len(window) == coint_window else float("nan"))
 
     return {
         "as_of": last,
@@ -100,7 +108,9 @@ def current_state(
         "days_held": days_held,
         "entry_z": entry_z,
         "z_trade": float(row["z_trade"]),  # NaN when flat
-        "coint_pvalue": float(coint.iloc[-1]) if not coint.empty else float("nan"),
+        "coint_pvalue": coint_pvalue,
+        "coint_window": coint_window,
+        "coint_end": window.index[-1],
         "half_life": half_life(signals["spread"]),
         "beta_min": float(recent_beta.min()),
         "beta_max": float(recent_beta.max()),
@@ -208,7 +218,7 @@ def trade_ticket(
 # --------------------------------------------------------------------------- #
 # d) Historical analogues
 # --------------------------------------------------------------------------- #
-def historical_analogues(trades: pd.DataFrame, z_now: float, tolerance: float = 0.5) -> dict:
+def historical_analogues(trades: pd.DataFrame, z_now: float, tolerance: float = ANALOGUE_TOLERANCE) -> dict:
     """Closed trades that started from a similar z-score on the same side.
 
     Similar: |z_at_signal| within `tolerance` of |z_now|, and the same sign.
@@ -247,7 +257,7 @@ def conviction(
     """Conviction level and the reasons for it, from explicit rules.
 
     1. Start at Medium if |z| > entry, otherwise "No trade" (and stop there).
-    2. Down one if the latest rolling cointegration p-value > 0.10.
+    2. Down one if the cointegration p-value on the latest window > 0.10.
     3. Down one if the research test Sharpe of the default settings < 0.
     4. Down one if |beta| < 0.3 (weak hedge).
     5. Up one only if the analogues won > 60% of at least 10 trades.

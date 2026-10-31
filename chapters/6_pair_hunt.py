@@ -19,14 +19,17 @@ import plotly.graph_objects as go  # noqa: E402
 import streamlit as st  # noqa: E402
 
 import ui  # noqa: E402
-from pair_hunt import CAPITAL  # noqa: E402
+import wording  # noqa: E402
+from pair_hunt import CAPITAL, FORMATION_DAYS, MAX_PVALUE, TRADING_DAYS_WINDOW  # noqa: E402
 from universe import RIVAL_PAIRS  # noqa: E402
 
 UNIVERSES = {"rivals": "Rival pairs", "mined": "Data-mined pairs"}
+EVERY = wording.period_words(TRADING_DAYS_WINDOW)   # "six months"
+FORMATION = wording.period_words(FORMATION_DAYS)    # "year"
+P_TEST = f"p < {MAX_PVALUE:g}"
 
 
-def md(text: str) -> None:
-    st.markdown(ui.escape_dollars(text))
+md = ui.md
 
 
 def direction_label(row: pd.Series) -> str:
@@ -90,8 +93,7 @@ top10["named"] = [frozenset((a, b)) in rival_set for a, b in zip(top10["a"], top
 n_named = int(top10["named"].sum())
 best_rival = rivals.iloc[0]
 md(f"The pairs strategy on all {len(mined)} data-mined pairs, ranked by full-sample Sharpe ratio. "
-   f"{n_named} of the top 10 {'is a named rival pair' if n_named == 1 else 'are named rival pairs'}; "
-   "the top of a data-mined list is often a pair of unrelated companies. The best rival pair, "
+   f"{wording.leaderboard_sentence(n_named, len(top10))} The best rival pair, "
    f"{best_rival['pair']}, scored {best_rival['sharpe']:.2f}. KO/PEP ranked "
    f"{summary['ko_pep_rank_in_mined']} of {len(mined)}.")
 st.dataframe(
@@ -130,10 +132,7 @@ fig.update_yaxes(visible=False, range=[-1, 1])
 fig.update_xaxes(title_text="Best full-sample Sharpe in the search")
 fig.update_layout(showlegend=False, hovermode="closest")
 ui.show_chart(fig, f"The real best pair beats {percentile:.0f}% of random markets", height=260)
-st.caption(f"Each dot is the best pair found in a market of random stocks with no real "
-           f"relationships. The real best pair (line) is no better than what luck typically finds. "
-           f"{len(luck)} simulations, so the percentile is approximate (each simulation moves it by "
-           f"about {100 / len(luck):.0f} points).")
+st.caption(wording.luck_caption(percentile, len(luck)))
 
 
 # --------------------------------------------------------------------------- #
@@ -141,23 +140,24 @@ st.caption(f"Each dot is the best pair found in a market of random stocks with n
 # --------------------------------------------------------------------------- #
 ui.section_heading("iv", "How many pairs look linked by chance")
 averages = windows.groupby("universe")[["n_tested", "n_passing", "n_expected_by_chance"]].mean()
-md("Every six months the honest version (section v) tests each pair for cointegration on the "
-   "previous year. On average " + "; ".join(
+md(f"Every {EVERY} the honest version (section v) tests each pair for cointegration on the "
+   f"previous {FORMATION}. On average " + "; ".join(
        f"{averages.loc[u, 'n_passing']:.1f} of {averages.loc[u, 'n_tested']:.0f} "
-       f"{UNIVERSES[u].lower()} passed p < 0.05, against {averages.loc[u, 'n_expected_by_chance']:.1f} "
+       f"{UNIVERSES[u].lower()} passed {P_TEST}, against {averages.loc[u, 'n_expected_by_chance']:.1f} "
        "expected by chance" for u in UNIVERSES if u in averages.index) + ".")
 choice = st.radio("Universe", list(UNIVERSES.values()), horizontal=True, label_visibility="collapsed")
 key = next(k for k, v in UNIVERSES.items() if v == choice)
 part = windows[windows["universe"] == key]
 fig = go.Figure()
-fig.add_bar(x=part["trading_start"], y=part["n_passing"], name="Pairs passing p < 0.05",
+fig.add_bar(x=part["trading_start"], y=part["n_passing"], name=f"Pairs passing {P_TEST}",
             marker_color=ui.COLORS["ink"])
 fig.add_scatter(x=part["trading_start"], y=part["n_expected_by_chance"], mode="lines",
                 name="Expected by chance", line=dict(color=ui.COLORS["amber"], dash="dash", width=2))
 fig.update_yaxes(title_text="Pairs")
-ui.show_chart(fig, f"{choice}: pairs passing the cointegration test, per six-month window", height=320)
-st.caption("When you test many pairs, about 1 in 20 passes at p < 0.05 by chance, so a "
-           "\"cointegrated\" label from a big search is weak evidence.")
+ui.show_chart(fig, f"{choice}: pairs passing the cointegration test, per trading window "
+                   f"({EVERY})", height=320)
+st.caption(f"When you test many pairs, {wording.chance_rate(MAX_PVALUE)} passes at {P_TEST} by chance, "
+           "so a \"cointegrated\" label from a big search is weak evidence.")
 
 
 # --------------------------------------------------------------------------- #
@@ -165,8 +165,8 @@ st.caption("When you test many pairs, about 1 in 20 passes at p < 0.05 by chance
 # --------------------------------------------------------------------------- #
 ui.section_heading("v", "The honest hunt")
 top_k = int(round(CAPITAL / windows["slot_capital"].iloc[0]))
-md(f"No hindsight this time. Every six months, rank the pairs by cointegration on the previous year "
-   f"only, trade up to {top_k} of those with p < 0.05 for the next six months with the default rules, "
+md(f"No hindsight this time. Every {EVERY}, rank the pairs by cointegration on the previous {FORMATION} "
+   f"only, trade up to {top_k} of those with {P_TEST} for the next {EVERY} with the default rules, "
    f"and keep unused slots in cash. {ui.fmt_money(CAPITAL)} is split into {top_k} equal slots; "
    "P&L is not compounded.")
 wf = summary["walk_forward"]
@@ -178,7 +178,8 @@ for u, color in (("rivals", ui.COLORS["ink"]), ("mined", ui.COLORS["slate"])):
 fig.add_hline(y=0, line=ui.ref_line())
 fig.update_yaxes(title_text="Cumulative P&L ($)", tickformat="$,.0f")
 ui.show_chart(fig, "Walk-forward pairs strategy, cumulative P&L", height=340)
-st.caption("A market-neutral strategy should be judged against cash (the zero line); it did not beat it.")
+st.caption(wording.cash_caption({UNIVERSES[u].lower().removesuffix(" pairs"): wf[u]["strategy"]["sharpe"]
+                                   for u in UNIVERSES}))
 
 fig = go.Figure()
 lines = [("rivals", "strategy_pnl", "Strategy, rival pairs", ui.COLORS["ink"], None),
@@ -241,6 +242,9 @@ md("\n".join(f"- {line}" for line in [
     "produces, not a perfect copy of real markets.",
     "**Benchmarks are not risk-matched.** The buy-and-hold lines carry market risk the pairs strategy "
     "is designed to avoid.",
+    "**Short legs are never closed in the hindsight test.** Each fixed direction is held for the whole "
+    "period with no stop and no margin call, so a short leg can lose more than 100% of its stake "
+    "(results/pair_hunt_hindsight.csv shows all four directions).",
     f"**An approximate percentile.** {len(luck)} simulations give the percentile to within several "
     "points; more simulations would narrow it.",
 ]))

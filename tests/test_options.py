@@ -211,3 +211,35 @@ def test_backed_out_iv_reprices_the_mid() -> None:
 def test_implied_vol_rejects_impossible_prices() -> None:
     # Below the minimum value of a deep in-the-money call: no volatility fits.
     assert np.isnan(implied_vol(5.0, 100.0, 80.0, 0.04, 0.1))
+
+
+# --------------------------------------------------------------------------- #
+# Zero-bid (weekend) chains: the net cost uses the cleaned price and never raises
+# --------------------------------------------------------------------------- #
+def zero_bid_chain(last_trade_age_days: int) -> pd.DataFrame:
+    """Calls quoted like a weekend snapshot: bid = ask = 0, priced only by a last trade."""
+    as_of = pd.Timestamp("2026-10-31 12:00", tz="UTC")
+    rows = [{"type": "call", "strike": k, "bid": 0.0, "ask": 0.0, "lastPrice": price,
+             "lastTradeDate": as_of - pd.Timedelta(days=last_trade_age_days), "impliedVolatility": 0.2}
+            for k, price in ((94.0, 2.20), (98.0, 0.70))]
+    return pd.DataFrame(rows)
+
+
+def test_net_cost_from_a_zero_bid_chain_uses_the_last_trade() -> None:
+    clean, _ = clean_quotes(zero_bid_chain(last_trade_age_days=1), pd.Timestamp("2026-10-31 12:00"))
+    row = clean.set_index("strike").loc[98.0].copy()
+    row["strike"] = 98.0
+    assert row["quote_type"] == LAST
+    result = protection_net_cost(row, 94.08, 0.04, 27 / 365, holding_days=13, shares=9_300)
+    assert result["ok"] and not result["spread_known"]
+    assert result["mid"] == pytest.approx(0.70)
+    assert result["per_share"]["spread_cost"] == pytest.approx(0.0, abs=1e-9)
+    assert abs(result["model_vs_mid"]) < 0.001
+
+
+def test_net_cost_without_a_usable_price_explains_instead_of_raising() -> None:
+    raw = zero_bid_chain(last_trade_age_days=1).iloc[1]  # raw row: bid = ask = 0, no clean price
+    result = protection_net_cost(raw, 94.08, 0.04, 27 / 365, holding_days=13)
+    assert result["ok"] is False and "no usable price" in result["reason"]
+    stale, drops = clean_quotes(zero_bid_chain(last_trade_age_days=10), pd.Timestamp("2026-10-31 12:00"))
+    assert stale.empty and sum(drops.values()) == 2  # old last trades are never used

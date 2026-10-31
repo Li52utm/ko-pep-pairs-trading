@@ -44,28 +44,22 @@ def universe_tickers(pairs: list[tuple[str, str]] = RIVAL_PAIRS) -> list[str]:
     return tickers
 
 
-def load_universe(start: str = DEFAULT_START, end: str | None = None,
-                  allow_snapshot: bool = True) -> pd.DataFrame:
-    """Adjusted closes for every RIVAL_PAIRS ticker, one column each (cached).
+def load_universe(start: str = DEFAULT_START, end: str | None = None) -> pd.DataFrame:
+    """Adjusted closes for every RIVAL_PAIRS ticker from the committed snapshot (never downloads).
 
     Rows are the union of all trading dates; a ticker is NaN before it listed.
-    If the cache is stale and the download fails, falls back to the committed
-    results/universe_snapshot.csv (attrs["snapshot_date"] set), unless
-    allow_snapshot=False.
+    attrs["snapshot_date"] is the last close.
     """
-    try:
-        return _load_universe_live(start, end)
-    except Exception:
-        if not allow_snapshot or not SNAPSHOT_PATH.exists():
-            raise
-        print(f"Live universe data unavailable; using {SNAPSHOT_PATH.name}")
-        snapshot = load_snapshot(SNAPSHOT_PATH, start, end)
-        prices = snapshot[universe_tickers()].copy()
-        prices.attrs["snapshot_date"] = snapshot.attrs["snapshot_date"]
-        return prices
+    if not SNAPSHOT_PATH.exists():
+        raise FileNotFoundError(f"{SNAPSHOT_PATH} is missing: run scripts/refresh_snapshots.py")
+    snapshot = load_snapshot(SNAPSHOT_PATH, start, end)
+    prices = snapshot[universe_tickers()].copy()
+    prices.attrs["snapshot_date"] = snapshot.attrs["snapshot_date"]
+    return prices
 
 
-def _load_universe_live(start: str = DEFAULT_START, end: str | None = None) -> pd.DataFrame:
+def download_universe(start: str = DEFAULT_START, end: str | None = None) -> pd.DataFrame:
+    """Download (through the data/ cache) the adjusted closes; only the refresh script calls this."""
     start_ts = pd.Timestamp(start)
     end_ts = pd.Timestamp(end) if end is not None else last_completed_trading_day()
     tickers = universe_tickers()

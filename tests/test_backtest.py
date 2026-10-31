@@ -139,13 +139,31 @@ def test_y_col_x_col_match_renamed_columns() -> None:
 # --------------------------------------------------------------------------- #
 # execution_lag
 # --------------------------------------------------------------------------- #
-def test_execution_lag_1_is_the_default() -> None:
-    # The hand-checked toy example above uses the default; lag 1 must be identical.
+def test_execution_lag_1_by_hand() -> None:
+    # Explicit lag 1 reproduces the hand-calculated toy numbers above.
     prices, signals = toy_inputs([0, 0, 1, 1, 1, 1, 0, 0, 0, 0])
-    daily_a, trades_a = run_backtest(prices, signals)
-    daily_b, trades_b = run_backtest(prices, signals, execution_lag=1)
-    pd.testing.assert_frame_equal(daily_a, daily_b)
-    pd.testing.assert_frame_equal(trades_a, trades_b)
+    daily, _ = run_backtest(prices, signals, capital=1500, cost_bps=10, borrow_rate=0.0252, execution_lag=1)
+    assert daily["position"].tolist() == [0, 0, 0, 1, 1, 1, 1, 0, 0, 0]
+    assert daily["gross_pnl"].tolist() == pytest.approx([0, 0, 0, 0, 100, 80, -90, 170, 0, 0])
+    assert daily["net_pnl"].sum() == pytest.approx(256.457)
+
+
+def test_execution_lag_2_by_hand() -> None:
+    # Same signals, one more day of delay: entry at day 4's close (KO 11, PEP 50), exit at day 8.
+    prices, signals = toy_inputs([0, 0, 1, 1, 1, 1, 0, 0, 0, 0])
+    daily, trades = run_backtest(prices, signals, capital=1500, cost_bps=10, borrow_rate=0.0252,
+                                 execution_lag=2)
+    ko_shares = 1000 / 11                          # KO notional 1500 / 1.5 = 1000 at 11
+    assert daily["shares_KO"].iloc[4] == pytest.approx(ko_shares)
+    assert daily["shares_PEP"].iloc[4] == pytest.approx(-10)      # -500 / 50
+    #   day 5: KO 11->12, PEP 50->52   day 6: 12->11, 52->51   day 7: 11->13, 51->54   day 8: no move
+    gross = [ko_shares * 1 - 10 * 2, ko_shares * -1 - 10 * -1, ko_shares * 2 - 10 * 3, 0.0]
+    assert daily["gross_pnl"].iloc[5:9].tolist() == pytest.approx(gross)
+    entry_cost = (1000 + 500) * 0.001
+    exit_cost = (ko_shares * 13 + 10 * 54) * 0.001
+    borrow = (10 * 50 + 10 * 52 + 10 * 51 + 10 * 54) * 0.0001     # PEP short at the previous close
+    assert daily["net_pnl"].sum() == pytest.approx(sum(gross) - entry_cost - exit_cost - borrow)
+    assert trades.iloc[0]["entry_date"] == DATES[4] and trades.iloc[0]["exit_date"] == DATES[8]
 
 
 @pytest.mark.parametrize("lag", [0, 2])

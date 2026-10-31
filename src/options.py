@@ -394,26 +394,41 @@ def protection_net_cost(call_row: pd.Series, spot: float, r: float, T: float,
                         holding_days: float, shares: int = 1, q: float = 0.0) -> dict:
     """What the protective call costs if it is sold back after the trade is closed.
 
-    call_row: one call from the chain (strike, bid, ask; impliedVolatility is only
-    reported, for comparison). holding_days: TRADING days the trade is held (e.g.
-    the backtest's average); converted to years at 252 a year.
+    call_row: one call, ideally a clean_quotes row (strike, bid, ask, price,
+    quote_type); impliedVolatility is only reported, for comparison.
+    holding_days: TRADING days the trade is held (e.g. the backtest's average);
+    converted to years at 252 a year.
 
-    1. Back out the call's implied volatility from its own mid (implied_vol), so
-       the model value today equals the mid exactly.
-    2. Re-value it after the holding period: same spot and volatility, less time.
-    3. Bought at the ask; sold at a resale bid = model value after the holding
-       period minus today's half-spread, floored at zero. A zero-day hold costs
-       exactly the bid/ask spread; an out-of-the-money call held to expiry resells
-       for zero.
-    Net cost = ask - resale bid = time decay (mid today - model value later) + spread cost.
-    Per share and in total (x shares). Spot is held fixed: this is the cost of
-    insurance that is not needed, not a forecast.
+    Price used:
+      - a usable bid/ask (quote_type "mid", or bid > 0 and ask >= bid without a
+        quote_type): bought at the ask, resold at model value minus half the spread;
+      - otherwise the cleaned last-trade price (quote_type "last trade (may be
+        stale)"): bought and resold at the model value, spread unknown (spread_known
+        is False and the spread cost is zero, so the net cost is understated).
+    Never raises: if there is no usable price or no implied volatility fits it,
+    returns {"ok": False, "reason": ...} so the page can explain and skip.
+
+    1. Back out the implied volatility from that price (implied_vol), so the model
+       value today equals it exactly.
+    2. Re-value the call after the holding period: same spot and volatility, less time.
+    3. Net cost = premium - resale = time decay + spread cost, per share and in
+       total (x shares). Spot is held fixed: the cost of cover that is not needed.
     """
-    strike, bid, ask = float(call_row["strike"]), float(call_row["bid"]), float(call_row["ask"])
-    mid, half_spread = (bid + ask) / 2, (ask - bid) / 2
+    strike = float(call_row["strike"])
+    bid, ask = float(call_row.get("bid", float("nan"))), float(call_row.get("ask", float("nan")))
+    quote_type = call_row.get("quote_type", MID if (bid > 0 and ask >= bid) else None)
+    if quote_type == MID and bid > 0 and ask >= bid:
+        mid, half_spread, premium, spread_known = (bid + ask) / 2, (ask - bid) / 2, ask, True
+    elif quote_type == LAST and float(call_row.get("price", 0) or 0) > 0:
+        mid, half_spread, premium, spread_known = float(call_row["price"]), 0.0, float(call_row["price"]), False
+    else:
+        return {"ok": False, "strike": strike,
+                "reason": f"the {strike:g} call has no usable price (no bid/ask and no recent last trade)"}
+
     sigma = implied_vol(mid, spot, strike, r, T, q)
     if math.isnan(sigma):
-        raise ValueError(f"No implied volatility fits the {strike:g} call's mid of {mid:.3f}")
+        return {"ok": False, "strike": strike,
+                "reason": f"no Black-Scholes volatility reproduces the {strike:g} call's price of {mid:.3f}"}
     T_after = max(T - holding_days / 252, 0.0)
 
     model_today = black_scholes_call(spot, strike, r, sigma, T, q)
@@ -421,16 +436,17 @@ def protection_net_cost(call_row: pd.Series, spot: float, r: float, T: float,
     resale = max(model_after - half_spread, 0.0)
 
     per_share = {
-        "premium": ask,
+        "premium": premium,
         "resale_value": resale,
         "time_decay": mid - model_after,
-        "spread_cost": (ask - resale) - (mid - model_after),
-        "net_cost": ask - resale,
+        "spread_cost": (premium - resale) - (mid - model_after),
+        "net_cost": premium - resale,
     }
     yahoo_iv = call_row.get("impliedVolatility", float("nan"))
     return {
-        "strike": strike, "implied_vol": sigma, "yahoo_implied_vol": float(yahoo_iv),
-        "mid": mid, "model_today": model_today, "model_vs_mid": model_today - mid,
+        "ok": True, "strike": strike, "implied_vol": sigma, "yahoo_implied_vol": float(yahoo_iv),
+        "mid": mid, "spread_known": spread_known, "quote_type": quote_type,
+        "model_today": model_today, "model_vs_mid": model_today - mid,
         "holding_days": holding_days, "T_after": T_after,
         "shares": shares, "per_share": per_share,
         "total": {key: value * shares for key, value in per_share.items()},

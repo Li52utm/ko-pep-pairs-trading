@@ -19,6 +19,7 @@ import streamlit as st  # noqa: E402
 from plotly.subplots import make_subplots  # noqa: E402
 
 import ui  # noqa: E402
+import wording  # noqa: E402
 from research import (  # noqa: E402
     DEFAULT_PARAMS, EXIT, GRID, GRID_AXES, MIN_TRAIN_TRADES, SPIKE_THRESHOLD, STOP,
     TEST_START, TRAIN_END, TRAIN_START, rank_correlation,
@@ -190,9 +191,7 @@ fig.update_xaxes(title_text="Train Sharpe")
 fig.update_yaxes(title_text="Test Sharpe")
 fig.update_layout(hovermode="closest")
 ui.show_chart(fig, f"Train vs test Sharpe: Spearman rho = {rho:+.2f} (p = {pvalue:.3f})", height=480)
-st.caption(f"The {n_grid} configs trade the same pair over the same dates, so they aren't "
-           "independent and the p-value overstates certainty. The direction is what matters: "
-           "the in-sample ranking pointed the wrong way.")
+st.caption(wording.rank_correlation_caption(rho, n_grid))
 
 
 # --------------------------------------------------------------------------- #
@@ -207,9 +206,7 @@ fig.add_vline(x=0, line=ui.ref_line(ui.COLORS["ink"], "dash", 1.2))
 fig.update_xaxes(title_text="Test Sharpe")
 fig.update_yaxes(title_text="Configs")
 ui.show_chart(fig, f"{n_positive} of {n_grid} positive out of sample")
-st.caption("With no edge, roughly half would land above zero by luck. Far fewer than half means "
-           "mean reversion on this pair has been systematically losing since the split, "
-           "not just noisy.")
+st.caption(wording.survivors_caption(n_positive, n_grid))
 
 
 # --------------------------------------------------------------------------- #
@@ -225,7 +222,7 @@ limit = max(float(m.abs().max().max()) for m in medians.values())
 DIVERGING = [[0.0, ui.COLORS["loss"]], [0.5, ui.COLORS["surface"]], [1.0, ui.COLORS["gain"]]]
 fig = make_subplots(rows=1, cols=2, subplot_titles=("Median train Sharpe", "Median test Sharpe"),
                     horizontal_spacing=0.08)
-for col, (period, table) in enumerate(medians.items(), start=1):
+for col, (_period, table) in enumerate(medians.items(), start=1):
     fig.add_heatmap(
         z=table.values, x=[f"entry {e}" for e in table.columns], y=[f"{w}d" for w in table.index],
         zmin=-limit, zmax=limit, zmid=0, colorscale=DIVERGING, showscale=col == 2,
@@ -283,3 +280,5 @@ st.markdown(
     "today, because the current test set has already been seen and can no longer give an "
     "honest out-of-sample answer."
 )
+
+ui.footer()

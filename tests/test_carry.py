@@ -7,12 +7,11 @@ import pandas as pd
 import pytest
 
 from carry import COMPONENTS, run_carry
-from data import load_all_data
 
 
 @pytest.fixture(scope="module")
-def prices() -> pd.DataFrame:
-    return load_all_data()
+def prices(snapshot_prices: pd.DataFrame) -> pd.DataFrame:
+    return snapshot_prices  # committed snapshot (conftest.py): deterministic, no network
 
 
 @pytest.fixture(scope="module")

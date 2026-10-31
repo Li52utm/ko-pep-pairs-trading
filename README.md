@@ -1,5 +1,8 @@
 # The Cola Wars: a KO/PEP pairs-trading case study
 
+[![Tests](https://github.com/Li52utm/ko-pep-pairs-trading/actions/workflows/tests.yml/badge.svg)](https://github.com/Li52utm/ko-pep-pairs-trading/actions/workflows/tests.yml)
+[![Data refresh](https://github.com/Li52utm/ko-pep-pairs-trading/actions/workflows/refresh-data.yml/badge.svg)](https://github.com/Li52utm/ko-pep-pairs-trading/actions/workflows/refresh-data.yml)
+
 A textbook pairs trade between Coca-Cola and PepsiCo, tested honestly: no look-ahead, realistic
 costs, out-of-sample research, a test against luck, and a Streamlit dashboard in seven chapters.
 
@@ -14,31 +17,32 @@ to move together. The textbook trade: when one runs ahead of the other, sell the
 buy the cheap one, and wait for the gap to close. **Does the textbook KO/PEP pairs trade actually
 work once it is tested honestly?**
 
+<!-- AUTO:START -->
 ## Key findings
 
 All numbers are from data to **30 October 2026** (daily closes from 4 January 2010), default
 settings, $1m of capital, 5 bps per leg in transaction costs and 0.5% a year short borrow.
 
-- **A winning record can still lose money.** The strategy won 50.5% of its 111 trades but lost
-  12.6% overall (Sharpe −0.13): the average loss ($17.5k) was larger than the average win ($15.1k).
+- **A winning record can still lose money.** The strategy won 50.9% of its 114 trades but lost
+  12.7% overall (Sharpe −0.13): the average loss ($17.2k) was larger than the average win ($14.6k).
 - **The best research setting collapsed out of sample.** Of 108 settings ranked on 2010–2019 only,
-  the best scored a Sharpe of 0.64 in training and −0.67 on 2020–2026. Only 7 of 108 settings had
+  the best scored a Sharpe of 0.65 in training and −0.67 on 2020–2026. Only 6 of 108 settings had
   a positive test Sharpe, and the train ranking was negatively correlated with the test ranking
-  (Spearman −0.23).
+  (Spearman −0.32).
 - **KO/PEP is not special, and the best pair looks like luck.** KO/PEP ranked 504th of 780 possible
   pairs among 40 large US stocks. The best pair (VZ/WMT, Sharpe 0.57) beat the best pair found in
-  markets of random, unrelated stocks in only 5 of 23 simulations (about the 22nd percentile).
+  markets of random, unrelated stocks in only 4 of 21 simulations (about the 19th percentile).
 - **Chosen without hindsight, the strategy did not beat cash.** A walk-forward version that picks
   cointegrated pairs on the past year and trades them for six months returned −6.8% on 20 rival
   pairs (Sharpe −0.20) and −0.9% on all 780 pairs (Sharpe −0.01).
-- **Cheap Swiss franc funding hid a large tail risk.** Funding the trade
-  with a franc loan earned CHF 18.7k of carry over the whole period; the Swiss National Bank's
+- **Cheap Swiss franc funding hid a large tail risk.** Funding the trade with a franc loan earned CHF 18.7k of carry over the whole period; the Swiss National Bank's
   removal of the EUR/CHF floor cost CHF 165.1k on a single day in January 2015, about 11 years of
   the average interest income.
 - **Stop-losses slip, and insuring against it costs more than it saves.** Each stop-loss lost
-  $6.3k more on average than a fill at the stop (worst $47.0k), mostly because prices gapped past
-  it. Protecting the short leg with a call costs about $6.4k net per trade, against an expected
+  $6.1k more on average than a fill at the stop (worst $47.0k), mostly because prices gapped past
+  it. Protecting the short leg with a call costs about $6.3k net per trade, against an expected
   slippage of about $1.2k per trade; the protection's value is in capping the tail, not on average.
+<!-- AUTO:END -->
 
 ## The seven chapters
 
@@ -66,7 +70,7 @@ settings, $1m of capital, 5 bps per leg in transaction costs and 0.5% a year sho
 - **Corrections log.** Every correction to the backtest is recorded with the date, what was wrong,
   why, the fix and before/after numbers, alongside measured effects that are deliberately kept
   (stop slippage, execution lag): see [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
-- **Tested.** 84 automated tests (pytest), including hand-calculated examples, the look-ahead tests,
+- **Tested.** An automated pytest suite, including hand-calculated examples, the look-ahead tests,
   a saved reference output for the signals, and Black-Scholes checks for the option code.
 
 ## Project structure
@@ -112,9 +116,8 @@ python3 -m venv .venv
 .venv/bin/streamlit run app.py
 ```
 
-The dashboard opens at http://localhost:8501. It downloads fresh prices when it can; if the
-download fails (Streamlit Community Cloud is often blocked by Yahoo) it uses the committed
-snapshot in `results/` and says "Using saved data to <date>".
+The dashboard opens at http://localhost:8501. It reads only the snapshots committed in `results/`
+(it never downloads on a page load) and shows their as-of date under every chapter heading.
 
 **Tests**
 
@@ -130,9 +133,29 @@ snapshot in `results/` and says "Using saved data to <date>".
 .venv/bin/python scripts/refresh_snapshots.py          # macOS / Linux
 ```
 
-This downloads prices, rates and the 40-stock universe, re-runs `src/research.py` and
-`src/pair_hunt.py` (about 7 minutes), and fetches new option chains for KO and PEP. Commit the
-changed files in `results/` afterwards.
+This downloads prices, rates, the 40-stock universe and the KO and PEP option chains, checks every
+download, writes the snapshots in `results/`, re-runs `src/research.py` and `src/pair_hunt.py`
+(about 7 minutes) and regenerates the key findings above (`scripts/update_readme.py`). Normally
+the scheduled GitHub Action does this for you (see Data pipeline).
+
+## Data pipeline
+
+The dashboard never downloads anything when a page loads: every chapter reads the snapshots
+committed in `results/`, and shows their as-of date ("Data as of …, refreshed automatically each
+weekday") under the chapter heading. Freshness comes from a scheduled GitHub Action:
+
+- **Schedule:** `.github/workflows/refresh-data.yml` runs at 22:30 UTC every weekday (after the
+  US close in both winter and summer time), and can also be started by hand from the Actions tab.
+- **What it does:** runs `scripts/refresh_snapshots.py` (download, check, write snapshots, re-run
+  the research and the pair hunt, regenerate the key findings), then runs the full test suite
+  offline. Only if the tests pass and something changed does it commit
+  `Data refresh: as of YYYY-MM-DD` as the github-actions bot and push.
+- **On failure:** if any download fails or looks wrong (empty, fewer rows than the committed
+  snapshot, a missing stock price, every option bid zero), the script stops before writing
+  anything; if the tests fail, nothing is committed. Either way the job fails (the badge turns red)
+  and the dashboard keeps serving the last good snapshot. Each chapter warns when the data is more
+  than 7 calendar days old, and chapter VII warns when the option snapshot has expired.
+- **Tests:** `.github/workflows/tests.yml` runs the full suite on every push and pull request.
 
 ## Limitations
 

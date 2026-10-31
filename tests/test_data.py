@@ -48,3 +48,25 @@ def test_load_universe_falls_back_to_snapshot(tmp_path, monkeypatch) -> None:
     loaded = universe.load_universe()
     assert list(loaded.columns) == tickers
     assert loaded.attrs["snapshot_date"] == "2026-10-30"
+
+
+def test_network_is_blocked_in_tests() -> None:
+    # conftest.py makes every download raise, so a test that downloads cannot pass silently.
+    import socket
+
+    import yfinance
+    from conftest import NetworkBlocked
+
+    with pytest.raises(NetworkBlocked):
+        yfinance.download("KO")
+    with pytest.raises(NetworkBlocked):
+        data._yf_column(["KO"], "Adj Close", pd.Timestamp("2026-01-02"), pd.Timestamp("2026-01-05"))
+    with pytest.raises(NetworkBlocked):
+        socket.create_connection(("example.com", 80), timeout=1)
+
+
+def test_live_loader_downloads_only_through_blocked_paths(tmp_path, monkeypatch) -> None:
+    # With an empty cache, the live loader must try to download, and that is blocked.
+    monkeypatch.setattr(data, "DATA_DIR", tmp_path)
+    with pytest.raises(Exception):
+        data.load_all_data(allow_snapshot=False)

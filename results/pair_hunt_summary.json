@@ -31,12 +31,12 @@
   },
   "ko_pep_rank_in_mined": 504,
   "luck": {
-    "n_sims": 23,
-    "seconds_per_sim": 12.70343180000782,
+    "n_sims": 21,
+    "seconds_per_sim": 13.930923399981111,
     "best_sharpe_min": 0.47697547548956143,
-    "best_sharpe_median": 0.6303984472431845,
+    "best_sharpe_median": 0.6601799396083373,
     "best_sharpe_max": 0.812244313853202,
-    "tenth_best_sharpe_median": 0.4095793626522747,
+    "tenth_best_sharpe_median": 0.4147667662890203,
     "rule_of_thumb_best_sharpe": 0.8898851188303788
   },
   "walk_forward": {

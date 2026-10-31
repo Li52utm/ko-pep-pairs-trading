@@ -39,6 +39,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from backtest import TRADING_DAYS
+
 DAY_COUNT = 360
 DEFAULT_CAPITAL = 1_000_000
 SELECTED_PATH = Path(__file__).resolve().parent.parent / "results" / "selected.json"
@@ -73,6 +75,19 @@ def accrual_days(index: pd.DatetimeIndex) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 # 1. Carry simulation
 # --------------------------------------------------------------------------- #
+def fx_on_equity_days(prices: pd.DataFrame) -> pd.Series:
+    """USD/CHF on every equity trading day: the last available FX close.
+
+    load_all_data keeps the US equity calendar, so on the few days Yahoo has no
+    CHF=X bar usdchf is NaN; the carry then uses the previous FX close (stale by a
+    day, like the FX timing noted in Known limitations). The first row must have FX.
+    """
+    fx = prices["usdchf"].ffill()
+    if fx.isna().any():
+        raise ValueError("usdchf is missing at the start of the sample")
+    return fx
+
+
 def run_carry(
     prices: pd.DataFrame,
     daily_strategy_pnl: pd.Series,
@@ -89,7 +104,7 @@ def run_carry(
                         position is set up at day 0's close, so nothing is earned yet.
     """
     pnl = daily_strategy_pnl.reindex(prices.index).fillna(0.0).to_numpy(dtype=float)
-    S = prices["usdchf"].to_numpy(dtype=float)
+    S = fx_on_equity_days(prices).to_numpy(dtype=float)
     usd_rate = prices["usd_3m"].to_numpy(dtype=float)
     # Loan rate (market + spread) for L; market rate (no spread) for the forward.
     chf_rate = chf_borrow_rate(prices["chf_3m"], chf_borrow_spread, floor_chf_rate_at_zero).to_numpy()
@@ -153,7 +168,8 @@ def strategy_only_chf(prices: pd.DataFrame, daily_strategy_pnl: pd.Series) -> pd
     """No loan: the USD strategy P&L converted to CHF at each day's S, for comparison."""
     pnl = daily_strategy_pnl.reindex(prices.index).fillna(0.0)
     pnl.iloc[0] = 0.0
-    result = pd.DataFrame({"S": prices["usdchf"], "strategy_chf": pnl * prices["usdchf"]})
+    fx = fx_on_equity_days(prices)
+    result = pd.DataFrame({"S": fx, "strategy_chf": pnl * fx})
     result["E"] = result["strategy_chf"].cumsum()
     result["dE"] = result["strategy_chf"]
     result["cum_strategy_chf"] = result["E"]
@@ -202,6 +218,27 @@ def event_impact(result: pd.DataFrame, date: str) -> pd.Series:
         impact["total_dE_pct_L0"] = row["dE"] / result["L"].iloc[0]
     return pd.Series(impact, name=pd.Timestamp(date).date())
 
+
+
+def snb_carry(carry_only: pd.DataFrame) -> dict:
+    """The SNB day against the carry it took to earn, for a carry-only result frame.
+
+    Returns the event_impact dict plus: loss (CHF, positive), avg_before / avg_all
+    (average daily carry income before the SNB day / over the whole sample) and
+    years_before / years_all (years of that carry the day wiped out; NaN when the
+    average carry is not positive, because then there were no gains to wipe out).
+    """
+    impact = event_impact(carry_only, SNB_NEXT_ROW)
+    income = (carry_only["usd_interest_chf"] + carry_only["chf_interest_chf"]).iloc[1:]
+    avg_before = income.loc[: pd.Timestamp(SNB_DATE) - pd.Timedelta(days=1)].mean()
+    avg_all = income.mean()
+    loss = abs(impact["total_dE"])
+
+    def years(avg: float) -> float:
+        return loss / (avg * TRADING_DAYS) if avg > 0 else float("nan")
+
+    return {**impact, "loss": loss, "avg_before": avg_before, "avg_all": avg_all,
+            "years_before": years(avg_before), "years_all": years(avg_all)}
 
 def summary(result: pd.DataFrame) -> dict:
     """Total CHF P&L, its split by component, and the worst single day."""

@@ -12,11 +12,16 @@ already contains that day's closing prices); otherwise it is re-downloaded.
 The default end date is the last fully completed US trading day, so a live
 intraday price never ends up in the cache.
 
-Deployment fallback: if the cache is stale and the download fails (hosted
-servers are often blocked by Yahoo), the committed snapshot
-results/data_snapshot.csv is used instead, and the returned frame carries
-attrs["snapshot_date"] so the dashboard can say "Using saved data to <date>".
-scripts/refresh_snapshots.py rewrites the snapshot.
+Two entry points:
+    load_all_data()      reads the committed snapshot results/data_snapshot.csv.
+                         The dashboard, research.py and pair_hunt.py use only
+                         this, so a page load never downloads anything.
+    download_all_data()  downloads (through the data/ cache) and returns the
+                         same frame. Only scripts/refresh_snapshots.py calls it,
+                         from the scheduled GitHub Action, and then rewrites
+                         the snapshot.
+Both frames carry attrs["snapshot_date"] (the last close) when read from a
+snapshot, so the dashboard can say "Data as of <date>".
 """
 
 from __future__ import annotations
@@ -169,35 +174,43 @@ def load_snapshot(path: Path, start: str | pd.Timestamp, end: str | pd.Timestamp
     return df
 
 
-def load_all_data(start: str = DEFAULT_START, end: str | None = None,
-                  allow_snapshot: bool = True) -> pd.DataFrame:
-    """Prices and rates: the cache, else a live download, else the committed snapshot.
+STALE_AFTER_DAYS = 7  # calendar days after the last close before the dashboard warns
 
-    See _load_live for the columns. With allow_snapshot=False a failed download
-    raises instead (scripts/refresh_snapshots.py uses this, so a snapshot is
-    never rewritten from itself).
+
+def load_all_data(start: str = DEFAULT_START, end: str | None = None) -> pd.DataFrame:
+    """Prices and rates from the committed snapshot (never downloads).
+
+    Columns as in download_all_data; attrs["snapshot_date"] is the last close.
     """
-    try:
-        return _load_live(start, end)
-    except Exception as error:  # network, blocked by Yahoo/FRED, empty download
-        if not allow_snapshot or not SNAPSHOT_PATH.exists():
-            raise
-        warnings.warn(f"Live data unavailable ({error}); using {SNAPSHOT_PATH.name}")
-        return load_snapshot(SNAPSHOT_PATH, start, end)
+    if not SNAPSHOT_PATH.exists():
+        raise FileNotFoundError(f"{SNAPSHOT_PATH} is missing: run scripts/refresh_snapshots.py")
+    return load_snapshot(SNAPSHOT_PATH, start, end)
 
 
-def _load_live(start: str = DEFAULT_START, end: str | None = None) -> pd.DataFrame:
-    """Load prices, FX and rates aligned on common trading days.
+def is_stale(last_close: pd.Timestamp, today: pd.Timestamp, max_days: int = STALE_AFTER_DAYS) -> bool:
+    """True if the last close is more than max_days calendar days before today."""
+    return (pd.Timestamp(today).normalize() - pd.Timestamp(last_close).normalize()).days > max_days
+
+
+def download_all_data(start: str = DEFAULT_START, end: str | None = None) -> pd.DataFrame:
+    """Load prices, FX and rates on US equity trading days.
 
     Returns a DataFrame indexed by date with columns:
         KO, PEP   adjusted close (USD)
-        usdchf    CHF per 1 USD
+        usdchf    CHF per 1 USD (NaN on the few equity days with no Yahoo FX bar)
         usd_3m    US 3-month T-bill rate, % p.a.
         chf_3m    Swiss 3-month interbank rate, % p.a. (previous month's average,
                   forward-filled; see _lag_chf_rate)
 
-    Only days where KO, PEP and USDCHF all have a price are kept; prices are
-    never filled. Rates are forward-filled onto those days.
+    The calendar is the US equity calendar: every day on which both KO and PEP
+    have a price. USD/CHF is joined onto those days and left as NaN where Yahoo
+    has no FX bar; only the carry module needs it, and it carries the previous
+    rate forward there (carry.fx_on_equity_days). Equity prices are never filled.
+    Rates are forward-filled onto the equity days.
+
+    Why: the equity strategy must not depend on whether an FX quote exists.
+    Inner-joining with FX used to drop 9 US trading days (corrected 2026-10-31,
+    see the Corrections log).
 
     `end` defaults to the last fully completed US trading day.
     """
@@ -211,8 +224,8 @@ def _load_live(start: str = DEFAULT_START, end: str | None = None) -> pd.DataFra
     rates = _cached("rates", _fetch_rates, cache_start - RATE_LOOKBACK, end_ts)
     rates = _lag_chf_rate(rates)
 
-    # Common trading days: inner join of prices, then drop any day missing a price.
-    prices = equities.join(fx, how="inner").dropna()
+    # US equity trading days: both stocks priced. FX is joined, not intersected.
+    prices = equities.dropna().join(fx, how="left")
     prices = prices.loc[start_ts:end_ts]
 
     # Forward-fill rates through their own calendar plus the trading days,

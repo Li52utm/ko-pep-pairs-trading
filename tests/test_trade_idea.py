@@ -71,6 +71,19 @@ def test_price_levels_sides() -> None:
 # --------------------------------------------------------------------------- #
 # c) trade_ticket
 # --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("side,beta,shares_ko,shares_pep", [
+    # $1m gross split 1 : |beta|: KO notional = 1e6 / (1 + |beta|) at $60, PEP = -side * beta * that at $170.
+    (-1, 0.8, -1e6 / 1.8 / 60, 0.8 * 1e6 / 1.8 / 170),       # -9,259.26 KO, +2,614.38 PEP
+    (1, 0.8, 1e6 / 1.8 / 60, -0.8 * 1e6 / 1.8 / 170),
+    (-1, 0.14, -1e6 / 1.14 / 60, 0.14 * 1e6 / 1.14 / 170),   # -14,619.88 KO, +722.39 PEP
+    (1, -0.2, 1e6 / 1.2 / 60, 0.2 * 1e6 / 1.2 / 170),        # negative beta: both legs long
+])
+def test_ticket_sizing_by_hand(side: int, beta: float, shares_ko: float, shares_pep: float) -> None:
+    ticket = trade_ticket(make_state(beta=beta, side=side), capital=1_000_000)
+    assert ticket["shares_ko"] == pytest.approx(shares_ko, rel=1e-12)
+    assert ticket["shares_pep"] == pytest.approx(shares_pep, rel=1e-12)
+
+
 @pytest.mark.parametrize("side,beta", [(-1, 0.8), (1, 0.8), (-1, 0.14), (1, -0.2)])
 def test_ticket_matches_backtest_sizing(side: int, beta: float) -> None:
     # Enter on day 1 from a signal on day 0; the backtest sizes with day 0's beta at
@@ -183,3 +196,8 @@ def test_current_state_open_trade() -> None:
     assert state["days_held"] == 3
     assert state["entry_z"] == pytest.approx(signals["zscore"].iloc[n - 4])
     assert 0 <= state["coint_pvalue"] <= 1
+    # The p-value is Engle-Granger on exactly the last 252 days, labelled with their end date.
+    from statsmodels.tsa.stattools import coint
+    last = prices.iloc[-252:]
+    assert state["coint_pvalue"] == pytest.approx(coint(np.log(last["KO"]), np.log(last["PEP"]))[1])
+    assert state["coint_window"] == 252 and state["coint_end"] == prices.index[-1]

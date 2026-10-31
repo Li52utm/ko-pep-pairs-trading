@@ -36,7 +36,7 @@ from backtest import TRADING_DAYS, run_backtest
 from metrics import return_metrics, sharpe_ratio, trade_metrics
 from research import _restrict_to_period  # flat at the start, forced flat at the end
 from signals import compute_signals
-from universe import RIVAL_PAIRS, check_coverage, load_universe, pair_prices, universe_tickers
+from universe import check_coverage, load_universe, pair_prices, universe_tickers
 
 RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 CAPITAL = 1_000_000
@@ -50,9 +50,21 @@ DIRECTIONS = {
     "short A / long B": (-1, 1),
 }
 
-LUCK_TIME_BUDGET = 300.0  # seconds for the luck baseline inside run_all
-MIN_SIMS = 10
-MAX_SIMS = 200
+# Walk-forward defaults (named so the dashboard can quote them).
+FORMATION_DAYS = 252   # one year of history to choose pairs on
+TRADING_DAYS_WINDOW = 126  # six months of trading before choosing again
+TOP_K = 5              # capital slots
+MAX_PVALUE = 0.05      # Engle-Granger cointegration threshold
+
+HINDSIGHT_NOTES = (
+    "# Best fixed direction chosen with hindsight: equal dollars per leg on day 0, never rebalanced.\n"
+    "# Short legs have no stop and no margin call, so a short leg can lose more than 100% of its\n"
+    "# stake (returns are on a gross exposure of 1: half per leg). Read with pandas.read_csv(..., comment='#').\n"
+)
+
+# A fixed number of luck simulations, so results are reproducible on any machine (the count
+# used to be set from the timing of one simulation, which varied between runs and runners).
+LUCK_SIMS = 20
 MIN_WINDOW_DAYS = 20  # a final, shorter trading window is kept only if this long
 
 
@@ -74,7 +86,10 @@ def fixed_direction_return(a: pd.Series, b: pd.Series, sign_a: int, sign_b: int,
 
     Gross exposure is 1 (half per leg). A short leg pays `borrow_rate` a year on
     its notional at the previous close, accrued daily as in run_backtest.
-    No transaction costs.
+    No transaction costs. A short leg is never closed, stopped or margin-called,
+    so if the stock keeps rising it can lose more than 100% of its stake (the
+    total return can fall below -50% from that leg alone). That is deliberate:
+    this is a thought experiment about hindsight, not a tradable strategy.
     """
     units_a = sign_a * 0.5 / a.iloc[0]
     units_b = sign_b * 0.5 / b.iloc[0]
@@ -240,10 +255,10 @@ def _buy_and_hold_pnl(window_prices: pd.DataFrame, tickers: list[str], dollars_e
 def walk_forward(
     prices: pd.DataFrame,
     pairs: list[tuple[str, str]],
-    formation: int = 252,
-    trading: int = 126,
-    top_k: int = 5,
-    max_pvalue: float = 0.05,
+    formation: int = FORMATION_DAYS,
+    trading: int = TRADING_DAYS_WINDOW,
+    top_k: int = TOP_K,
+    max_pvalue: float = MAX_PVALUE,
     capital: float = CAPITAL,
 ) -> dict[str, pd.DataFrame]:
     """Choose pairs on the past year, trade them for the next six months, repeat.
@@ -401,7 +416,8 @@ def run_all() -> dict:
 
     print("a) Best fixed direction chosen with hindsight")
     hindsight = _timed("hindsight directions", hindsight_directions, universe, rivals)
-    hindsight.to_csv(RESULTS_DIR / "pair_hunt_hindsight.csv", index=False)
+    path = RESULTS_DIR / "pair_hunt_hindsight.csv"
+    path.write_text(HINDSIGHT_NOTES + hindsight.to_csv(index=False), encoding="utf-8")
 
     print("b) Hindsight leaderboards")
     board_rivals = _timed("rivals", hindsight_leaderboard, universe, rivals)
@@ -410,13 +426,11 @@ def run_all() -> dict:
     board_mined.to_csv(RESULTS_DIR / "pair_hunt_leaderboard_mined.csv", index=False)
 
     print("c) Luck baseline")
+    n_sims = LUCK_SIMS
     start = time.perf_counter()
-    luck_baseline(universe, 1, seed=0, pairs=mined)
-    one_sim = time.perf_counter() - start
-    n_sims = int(min(max(LUCK_TIME_BUDGET // one_sim, MIN_SIMS), MAX_SIMS))
-    print(f"  one simulation: {one_sim:.1f}s -> n_sims = {n_sims} "
-          f"(budget {LUCK_TIME_BUDGET:.0f}s, at least {MIN_SIMS})")
-    luck = _timed(f"{n_sims} simulations", luck_baseline, universe, n_sims, seed=42, pairs=mined)
+    luck = luck_baseline(universe, n_sims, seed=42, pairs=mined)
+    one_sim = (time.perf_counter() - start) / n_sims
+    print(f"  {n_sims} simulations: {one_sim * n_sims:.1f}s ({one_sim:.1f}s each)")
     luck.to_csv(RESULTS_DIR / "pair_hunt_luck.csv", index=False)
 
     wf = run_walk_forward_step(universe, rivals, mined)
