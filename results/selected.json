@@ -1,0 +1,29 @@
+{
+  "combo_id": 87,
+  "params": {
+    "window": 252,
+    "beta_mode": "bounded_0.5_1.5",
+    "entry": 1.5,
+    "freeze_at_entry": true,
+    "max_holding_days": 30
+  },
+  "train_sharpe": 0.6393645254204059,
+  "train_n_trades": 37,
+  "n_eligible": 91,
+  "n_neighbours": 8,
+  "neighbour_median_train_sharpe": 0.31639247059689724,
+  "gap_vs_neighbours": 0.32297205482350866,
+  "possible_lucky_spike": true,
+  "compute_signals_kwargs": {
+    "window": 252,
+    "entry": 1.5,
+    "exit": 0.5,
+    "stop": 3.5,
+    "freeze_at_entry": true,
+    "max_holding_days": 30,
+    "beta_bounds": [
+      0.5,
+      1.5
+    ]
+  }
+}

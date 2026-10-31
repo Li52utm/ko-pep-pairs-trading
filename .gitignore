@@ -1,0 +1,32 @@
+# Virtual environment
+.venv/
+venv/
+
+# Cached data downloads (re-created on demand; committed snapshots live in results/)
+data/
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Streamlit secrets (never commit)
+.streamlit/secrets.toml
+
+# Local tool settings, scratch and temporary files
+.claude/
+scratch/
+scratchpad/
+tmp/
+*.tmp
+*.log
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# NOTE: results/ and tests/fixtures/ are deliberately tracked (the dashboard and tests read them).

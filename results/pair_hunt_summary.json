@@ -1,0 +1,80 @@
+{
+  "sample": {
+    "start": "2010-01-04",
+    "end": "2026-10-30",
+    "years": 16.8186173853525,
+    "n_tickers": 40,
+    "n_rival_pairs": 20,
+    "n_mined_pairs": 780
+  },
+  "hindsight_directions": {
+    "best_pair": "INTC/AMD",
+    "best_direction": "long A / long B",
+    "best_return": 27.45267471620684,
+    "median_best_return": 6.862726638556325
+  },
+  "leaderboard": {
+    "rivals": {
+      "best_pair": "GS/MS",
+      "best_sharpe": 0.4917481837699927,
+      "tenth_best_sharpe": 0.030315966642537894,
+      "median_sharpe": 0.008875920446813282,
+      "share_positive": 0.5
+    },
+    "mined": {
+      "best_pair": "VZ/WMT",
+      "best_sharpe": 0.5731578888671592,
+      "tenth_best_sharpe": 0.44800037353835365,
+      "median_sharpe": -0.03540962278046057,
+      "share_positive": 0.43333333333333335
+    }
+  },
+  "ko_pep_rank_in_mined": 504,
+  "luck": {
+    "n_sims": 23,
+    "seconds_per_sim": 12.70343180000782,
+    "best_sharpe_min": 0.47697547548956143,
+    "best_sharpe_median": 0.6303984472431845,
+    "best_sharpe_max": 0.812244313853202,
+    "tenth_best_sharpe_median": 0.4095793626522747,
+    "rule_of_thumb_best_sharpe": 0.8898851188303788
+  },
+  "walk_forward": {
+    "rivals": {
+      "strategy": {
+        "total_return": -0.06830204955258343,
+        "sharpe": -0.2030792271889879
+      },
+      "pairs_long_only": {
+        "total_return": 1.2144290695131372,
+        "sharpe": 1.0396275595031172
+      },
+      "equal_weight": {
+        "total_return": 2.4624452194409905,
+        "sharpe": 0.9959328945000728
+      },
+      "n_windows": 32,
+      "windows_with_no_pair": 8,
+      "avg_pairs_selected": 1.5,
+      "n_trades": 170
+    },
+    "mined": {
+      "strategy": {
+        "total_return": -0.008826697403291395,
+        "sharpe": -0.010679047370221607
+      },
+      "pairs_long_only": {
+        "total_return": 2.2101221846542725,
+        "sharpe": 0.8029298086426735
+      },
+      "equal_weight": {
+        "total_return": 2.4624452194409905,
+        "sharpe": 0.9959328945000728
+      },
+      "n_windows": 32,
+      "windows_with_no_pair": 0,
+      "avg_pairs_selected": 5.0,
+      "n_trades": 572
+    }
+  }
+}

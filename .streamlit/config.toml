@@ -1,0 +1,34 @@
+# Light editorial theme. The same colours live in src/ui.py (COLORS); keep them in step.
+[theme]
+base = "light"
+primaryColor = "#15213B"             # ink: sliders, toggles, focus rings
+backgroundColor = "#F6F7F9"          # paper
+secondaryBackgroundColor = "#FFFFFF" # surface: inputs
+textColor = "#15213B"                # ink
+borderColor = "#DDE1E8"              # rule
+showWidgetBorder = true
+showSidebarBorder = true
+linkColor = "#15213B"
+greenColor = "#1E8A6E"               # gain (st.metric deltas)
+redColor = "#8E2C3A"                 # loss
+orangeColor = "#B7791F"              # amber
+grayColor = "#6A7385"                # slate
+baseRadius = "small"
+dataframeHeaderBackgroundColor = "#F6F7F9"
+# Google Fonts, loaded by Streamlit itself ("<font name>:<css url>", then fallbacks).
+font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap, sans-serif"
+headingFont = "'Libre Caslon Text':https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:wght@400;700&display=swap, serif"
+headingFontWeights = [400, 400, 400, 500, 500, 500]
+headingFontSizes = ["2.6rem", "1.65rem", "1.25rem", "1.1rem", "1rem", "0.9rem"]
+metricValueFontSize = "1.9rem"
+chartCategoricalColors = ["#15213B", "#6A7385", "#B7791F", "#B4BAC6"]
+
+[theme.sidebar]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F6F7F9"
+
+[client]
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
