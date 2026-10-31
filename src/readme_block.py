@@ -56,7 +56,7 @@ def render_block(f: dict) -> str:
 
     collapsed = f["chosen_test_sharpe"] < 0
     rho = f["rank_corr"]
-    b2 = ((f"**The best research setting collapsed out of sample.** " if collapsed
+    b2 = (("**The best research setting collapsed out of sample.** " if collapsed
             else "**The best research setting held up out of sample.** ")
           + f"Of {f['n_settings']} settings ranked on {f['train_years']} only, the best scored a Sharpe of "
           + f"{f['chosen_train_sharpe']:.2f} in training and {f['chosen_test_sharpe']:.2f} on {f['test_years']}. "

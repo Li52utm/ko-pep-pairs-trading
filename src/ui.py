@@ -22,7 +22,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 
-from backtest import TRADING_DAYS, run_backtest
+from backtest import run_backtest
 from carry import SNB_DATE, run_carry, run_scenarios, scenario_results
 from carry import snb_carry as carry_snb_carry
 from carry import summary as carry_summary  # noqa: F401  (re-exported for pages)

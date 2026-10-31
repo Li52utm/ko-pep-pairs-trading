@@ -1,8 +1,7 @@
 """Dashboard tests: every chapter through app.py with Streamlit's AppTest, offline.
 
-The conftest.py guard blocks every download, and the cache folder is pointed at an
-empty directory, so the app always runs on the committed snapshots in results/,
-as it would on a hosted server that cannot reach Yahoo.
+The dashboard reads only the committed snapshots in results/; the conftest.py guard
+also blocks every download, so any page that tried to fetch data would fail here.
 """
 
 from __future__ import annotations
@@ -49,9 +48,13 @@ def markdown_text(at: AppTest) -> str:
 def test_every_chapter_renders_offline_from_the_snapshot(offline_app, page: str) -> None:
     at = offline_app(page)
     assert not at.exception, [e.value for e in at.exception]
-    # Downloads are blocked, so the committed snapshot is used and the page says so.
-    assert "Using saved data to" in markdown_text(at)
-    assert "investment advice" in " ".join(c.value for c in at.caption)  # footer on every chapter
+    # One as-of date under every chapter heading: the snapshot's last close.
+    captions = " ".join(c.value for c in at.caption)
+    last = ui.data_as_of()
+    assert f"Data as of {last.day} {last:%B %Y}, refreshed automatically each weekday." in captions
+    assert "investment advice" in captions  # footer on every chapter
+    # No page offers to fetch data (settings buttons such as "Reset to defaults" are fine).
+    assert not [b.label for b in at.button if "refresh" in b.label.lower() or "fetch" in b.label.lower()]
 
 
 def test_story_is_the_default_page(offline_app) -> None:
@@ -60,11 +63,11 @@ def test_story_is_the_default_page(offline_app) -> None:
     assert any(m.label == "Overall result" for m in at.metric)
 
 
-def test_saving_the_pair_without_a_snapshot_asks_for_a_refresh(offline_app, monkeypatch, tmp_path) -> None:
+def test_saving_the_pair_without_a_snapshot_explains(offline_app, monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(options, "RESULTS_DIR", tmp_path / "no_snapshots")
     at = offline_app("chapters/7_saving_the_pair.py")
     assert not at.exception, [e.value for e in at.exception]
-    assert "Press **Refresh option prices**" in markdown_text(at)
+    assert "written by the scheduled data refresh" in markdown_text(at)
 
 
 def test_saving_the_pair_with_a_zero_bid_chain(offline_app, monkeypatch) -> None:

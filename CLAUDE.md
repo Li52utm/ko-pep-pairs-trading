@@ -281,19 +281,39 @@ the fix, and the before/after numbers.
 
 ## Data
 
-Handled by `src/data.py` via `load_all_data(start, end)`, which returns a DataFrame with
-columns `KO, PEP, usdchf, usd_3m, chf_3m` (yfinance + FRED, cached in `data/`).
+Handled by `src/data.py`. `load_all_data(start, end)` reads the committed snapshot
+`results/data_snapshot.csv` and returns a DataFrame with columns `KO, PEP, usdchf, usd_3m, chf_3m`
+(`attrs["snapshot_date"]` = last close). It never downloads: `download_all_data()` (yfinance + FRED,
+cached in `data/`) is called only by `scripts/refresh_snapshots.py`. Same split in `universe.py`
+(`load_universe` / `download_universe`).
 Prices are never forward-filled; only rates are. The calendar is the US equity calendar (every
 day on which both KO and PEP trade); `usdchf` is left-joined and is NaN on the few days Yahoo has
 no FX bar, and only the carry module forward-fills it (`carry.fx_on_equity_days`).
 
-Deployment fallback: `load_all_data` and `universe.load_universe` try the cache, then a live
-download, then the committed snapshots `results/data_snapshot.csv` / `results/universe_snapshot.csv`
-(hosted servers are often blocked by Yahoo). A snapshot frame carries `attrs["snapshot_date"]`, and
-`ui.chapter_heading` then shows "Using saved data to <date>". `allow_snapshot=False` disables the
-fallback. `scripts/refresh_snapshots.py` refreshes both snapshots (live only), re-runs
-`src/research.py` and `src/pair_hunt.py`, and fetches the KO and PEP option snapshots; commit the
-changed `results/` files afterwards.
+## Data pipeline
+
+The dashboard reads ONLY the snapshots committed in `results/`; no page load downloads anything
+and no button fetches data. Freshness comes from a scheduled GitHub Action:
+
+- `.github/workflows/refresh-data.yml`: cron `30 22 * * 1-5` (22:30 UTC, weekdays, after the US close
+  all year) plus `workflow_dispatch`; `contents: write`; a `refresh-data` concurrency group; 45-minute
+  timeout; Python 3.14 (what `requirements.txt` is pinned for).
+- It runs `scripts/refresh_snapshots.py`: download prices/rates, the 40-stock universe and the KO and
+  PEP option chains into a fresh temporary cache; check them all (`src/pipeline.py`: not empty, not
+  fewer rows than the committed snapshot, no missing or non-positive KO/PEP price, latest rates
+  present, not every option bid zero); only then write the snapshots, re-run `src/research.py` and
+  `src/pair_hunt.py`, and regenerate the README auto-block (`scripts/update_readme.py`, which rewrites
+  only the text between `<!-- AUTO:START -->` and `<!-- AUTO:END -->`, from `src/readme_block.py`).
+- Then the full test suite runs offline. Only if the tests pass and files changed does it commit
+  `Data refresh: as of YYYY-MM-DD` as the github-actions bot and push.
+- On failure: a failed or implausible download stops the script before anything is written
+  (`DataCheckError`, exit code 1); a failed test means nothing is committed. The job fails, the badge
+  turns red, and the dashboard keeps serving the last good snapshot.
+- The dashboard shows "Data as of <last close>, refreshed automatically each weekday" under every
+  chapter heading (`ui.data_as_of_note`), warns when the snapshot is more than 7 calendar days old
+  (`data.is_stale`), and chapter VII warns when the option snapshot has expired or is stale.
+  `ui.get_data` clears all Streamlit caches when the snapshot file changes under a running server.
+- `.github/workflows/tests.yml` runs pytest on every push and pull request.
 
 ## Run the dashboard
 
@@ -337,8 +357,8 @@ changed `results/` files afterwards.
 - Saving the Pair (chapter VII) prices listed options on the SHORT leg of today's trade
   (`src/options.py`, tests in `tests/test_options.py`). It reads a snapshot,
   `results/options_snapshot_<TICKER>.csv` + `results/options_dividends_<TICKER>.csv`, through
-  `ui.load_options_snapshot()`; only the "Refresh option prices" button fetches from Yahoo
-  (`options.refresh_snapshot`). Without a snapshot the page shows a note asking for a refresh.
+  `ui.load_options_snapshot()`; only the scheduled refresh fetches from Yahoo (`options.fetch_chain`).
+  Without a snapshot the page shows a note explaining that the refresh writes it.
   `clean_quotes` uses a bid/ask mid only if bid > 0, ask >= bid and the spread is under 25% of mid,
   otherwise a last trade no older than 3 trading days (flagged), otherwise drops the row.
   `parity_check` uses Hull's American bounds `S - D - K <= C - P <= S - K e^(-rT)`; a strike
