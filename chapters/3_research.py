@@ -27,6 +27,7 @@ from research import (  # noqa: E402
 
 ui.apply_theme()
 ui.chapter_heading(**ui.CHAPTERS["research"])
+ui.question_box("research")
 
 research = ui.load_research()
 if research is None:

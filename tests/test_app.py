@@ -23,6 +23,8 @@ APP = str(ROOT / "app.py")
 CHAPTERS = ["chapters/1_story.py", "chapters/2_backtest.py", "chapters/3_research.py", "chapters/4_twist.py",
             "chapters/5_trade_idea.py", "chapters/6_pair_hunt.py", "chapters/7_saving_the_pair.py"]
 TIMEOUT = 300
+CHAPTER_KEYS = dict(zip(CHAPTERS, ["story", "backtest", "research", "twist", "trade_idea", "pair_hunt",
+                                   "saving_the_pair"]))
 
 
 @pytest.fixture
@@ -55,6 +57,12 @@ def test_every_chapter_renders_offline_from_the_snapshot(offline_app, page: str)
     assert f"Data as of {last.day} {last:%B %Y}, refreshed automatically each weekday." in captions
     assert "investment advice" in captions  # footer on every chapter
     assert validation.summary_line(ui.load_validation()) in captions  # data checks line in every footer
+    # Every chapter opens with its question and a generated answer, and every chart has a source line.
+    key = CHAPTER_KEYS[page]
+    text = markdown_text(at)
+    assert f"**The question:** {ui.QUESTIONS[key]}" in text and "**The answer: " in text
+    if at.get("plotly_chart"):
+        assert ui.source_line() in captions
     # No page offers to fetch data (settings buttons such as "Reset to defaults" are fine).
     assert not [b.label for b in at.button if "refresh" in b.label.lower() or "fetch" in b.label.lower()]
 

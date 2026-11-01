@@ -59,6 +59,7 @@ with st.sidebar:
                        help="Sell the USD balance one day forward every day (covered interest parity).")
 
 ui.chapter_heading(**ui.CHAPTERS["twist"])
+ui.question_box("twist")
 
 strategy_params: dict = {}
 if strategy_choice == "Chosen config":

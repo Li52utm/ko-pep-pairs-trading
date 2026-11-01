@@ -29,20 +29,22 @@ All numbers are from data to **30 October 2026** (daily closes from 4 January 20
 - **Cheap Swiss franc funding hid a large tail risk.** Funding the trade with a franc loan earned CHF 17.9k of carry over the whole period; the Swiss National Bank's removal of the EUR/CHF floor cost CHF 165.1k on a single day in January 2015, about 11 years of the average interest income.
 - **Do options save the pair? No.** Each stop-loss lost $6.1k more on average than a fill at the stop (worst $47.0k). Across all 115 trades since 2010 (1 still open), buying a call on the short leg at its stop level lowers the total from -$127.4k to -$282.9k and moves the Sharpe ratio from -0.13 to -0.36 (a model estimate). The calls paid off on only 26% of trades and cost $155.5k net in total, so the protected version is worse on the total, the Sharpe ratio and the worst trade.
 
-Automated tests: **165** (pytest, offline), run on every push and before every data refresh is committed.
+Automated tests: **175** (pytest, offline), run on every push and before every data refresh is committed.
 <!-- AUTO:END -->
 
 ## The seven chapters
 
-| | Chapter | What it shows |
-|---|---|---|
-| <img src="docs/images/1_story.png" width="220"> | **I. The Story** | The whole case study in plain English for a non-finance reader, every number generated live. |
-| <img src="docs/images/2_backtest.png" width="220"> | **II. The Backtest** | The full history with every setting adjustable, trade log, execution lag and stop slippage. |
-| <img src="docs/images/3_research.png" width="220"> | **III. The Research** | 108 settings chosen on 2010–2019 and judged on 2020 onwards; robustness and cost sensitivity. |
-| <img src="docs/images/4_twist.png" width="220"> | **IV. The Twist** | Funding the strategy with a Swiss franc loan: carry, FX, the 2015 SNB shock, and a hedge. |
-| <img src="docs/images/5_trade_idea.png" width="220"> | **V. The Trade Idea** | A desk note generated from the latest close: levels, sizing, analogues, conviction, risks. |
-| <img src="docs/images/6_pair_hunt.png" width="220"> | **VI. The Pair Hunt** | 20 rival pairs and 780 data-mined pairs, a test against luck, and a walk-forward version. |
-| <img src="docs/images/7_saving_the_pair.png" width="220"> | **VII. Saving the Pair** | Put-call parity in today's option prices, and whether options can do what the stop-loss couldn't. |
+Every chapter opens with its question and an answer generated from the current data.
+
+| | Chapter | The question | What it shows |
+|---|---|---|---|
+| <img src="docs/images/1_story.png" width="220"> | **I. The Story** | Does the textbook pair trade work? | The whole case study in plain English for a non-finance reader, every number generated live. |
+| <img src="docs/images/2_backtest.png" width="220"> | **II. The Backtest** | Does it make money after costs? | The full history with every setting adjustable, trade log, execution lag and stop slippage; market neutrality against the S&P 500, monthly returns, rolling Sharpe, VaR, a data-quality table and a one-page PDF tear sheet. |
+| <img src="docs/images/3_research.png" width="220"> | **III. The Research** | Does tuning the settings help? | 108 settings chosen on 2010–2019 and judged on 2020 onwards; robustness and cost sensitivity. |
+| <img src="docs/images/4_twist.png" width="220"> | **IV. The Twist** | Does cheap Swiss franc funding help? | Funding the strategy with a Swiss franc loan: carry, FX, the 2015 SNB shock, and a hedge. |
+| <img src="docs/images/5_trade_idea.png" width="220"> | **V. The Trade Idea** | Is there a trade today? | A sell-side style desk note from the latest close: recommendation, the trade, risk/reward, a scenario grid, market exposure, catalysts, liquidity, risks and disclosures. |
+| <img src="docs/images/6_pair_hunt.png" width="220"> | **VI. The Pair Hunt** | Is any pair better than luck? | 20 rival pairs and 780 data-mined pairs, a test against luck, and a walk-forward version. |
+| <img src="docs/images/7_saving_the_pair.png" width="220"> | **VII. Saving the Pair** | Do options save the pair? | A protective call priced on every historical trade (a model estimate), put-call parity in today's option prices, and three ways to hold the short leg. |
 
 ## Methodology highlights
 
@@ -58,6 +60,12 @@ Automated tests: **165** (pytest, offline), run on every push and before every d
 - **Corrections log.** Every correction to the backtest is recorded with the date, what was wrong,
   why, the fix and before/after numbers, alongside measured effects that are deliberately kept
   (stop slippage, execution lag): see [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
+- **Validated data.** Eight checks against independent sources before every refresh is written: a second
+  price source (Nasdaq), a total-return rebuild from dividends and splits, the NYSE calendar, every move
+  above 8%, dividends per year, USD/CHF against FRED, interest-rate ranges and the option quotes. Any FAIL
+  stops the refresh; results in [docs/DATA_VALIDATION.md](docs/DATA_VALIDATION.md).
+- **Market neutrality measured.** Daily strategy returns are regressed on the S&P 500 with Newey-West
+  errors, for the full sample and the test period.
 - **Tested.** An automated pytest suite, including hand-calculated examples, the look-ahead tests,
   a saved reference output for the signals, and Black-Scholes checks for the option code.
 
@@ -67,20 +75,23 @@ Automated tests: **165** (pytest, offline), run on every push and before every d
 app.py                      Streamlit router: the seven chapters in order
 chapters/                   One file per dashboard chapter (1_story.py ... 7_saving_the_pair.py)
 src/
-  data.py                   Prices (Yahoo Finance) and interest rates (FRED), cached, with a snapshot fallback
+  data.py                   Prices (Yahoo Finance) and interest rates (FRED): snapshot reads, downloads for the refresh
+  validation.py             The eight data checks (PASS / WARN / FAIL)
   signals.py                Rolling hedge ratio, z-score and the entry/exit/stop state machine
   backtest.py               Day-by-day simulation with costs, borrow and execution lag
-  metrics.py                Returns, trade statistics, costs and exit slippage
+  metrics.py                Returns, trade statistics, costs, exit slippage, market regression, VaR
+  tearsheet.py              The one-page PDF tear sheet (fpdf2)
   research.py               Fixed parameter grid, train/test selection, cost sensitivity
   carry.py                  The Swiss franc carry twist (Chapter IV)
   trade_idea.py             The desk note calculations (Chapter V)
   universe.py, pair_hunt.py The rival-pair universe, luck baseline and walk-forward (Chapter VI)
-  options.py                Option snapshot, quote cleaning, put-call parity, structures (Chapter VII)
+  options.py                Option snapshot, parity, structures, historical protection model (Chapter VII)
   ui.py                     Dashboard helpers: caching, formatting, theme and charts
 scripts/refresh_snapshots.py  Refreshes every committed snapshot and result file
+scripts/validate_data.py    Runs the data validation (also called by the refresh)
 results/                    Committed results and data snapshots the dashboard reads
 tests/                      pytest suite (and a saved reference fixture)
-docs/                       METHODOLOGY.md and the screenshots
+docs/                       METHODOLOGY.md, DATA_VALIDATION.md and the screenshots
 .streamlit/config.toml      Theme (colours and fonts)
 ```
 
@@ -121,8 +132,9 @@ The dashboard opens at http://localhost:8501. It reads only the snapshots commit
 .venv/bin/python scripts/refresh_snapshots.py          # macOS / Linux
 ```
 
-This downloads prices, rates, the 40-stock universe and the KO and PEP option chains, checks every
-download, writes the snapshots in `results/`, re-runs `src/research.py` and `src/pair_hunt.py`
+This downloads prices (KO, PEP, SPY), rates, the 40-stock universe, the KO and PEP option chains,
+daily volumes and the next earnings and ex-dividend dates, checks every download, validates the data
+against independent sources (`scripts/validate_data.py`), writes the snapshots in `results/`, re-runs `src/research.py` and `src/pair_hunt.py`
 (about 7 minutes) and regenerates the key findings above (`scripts/update_readme.py`). Normally
 the scheduled GitHub Action does this for you (see Data pipeline).
 
@@ -134,13 +146,13 @@ weekday") under the chapter heading. Freshness comes from a scheduled GitHub Act
 
 - **Schedule:** `.github/workflows/refresh-data.yml` runs at 22:30 UTC every weekday (after the
   US close in both winter and summer time), and can also be started by hand from the Actions tab.
-- **What it does:** runs `scripts/refresh_snapshots.py` (download, check, write snapshots, re-run
+- **What it does:** runs `scripts/refresh_snapshots.py` (download, check, validate, write snapshots, re-run
   the research and the pair hunt, regenerate the key findings), then runs the full test suite
   offline. Only if the tests pass and something changed does it commit
   `Data refresh: as of YYYY-MM-DD` as the github-actions bot and push.
 - **On failure:** if any download fails or looks wrong (empty, fewer rows than the committed
-  snapshot, a missing stock price, every option bid zero), the script stops before writing
-  anything; if the tests fail, nothing is committed. Either way the job fails (the badge turns red)
+  snapshot, a missing stock price, every option bid zero) or any data validation check is FAIL, the
+  script stops before writing anything; if the tests fail, nothing is committed. Either way the job fails (the badge turns red)
   and the dashboard keeps serving the last good snapshot. Each chapter warns when the data is more
   than 7 calendar days old, and chapter VII warns when the option snapshot has expired.
 - **Tests:** `.github/workflows/tests.yml` runs the full suite on every push and pull request.
@@ -152,13 +164,17 @@ weekday") under the chapter heading. Freshness comes from a scheduled GitHub Act
   were chosen by hand with hindsight.
 - The Swiss franc twist uses an idealised daily FX hedge and approximate day counts; the FX data
   is slightly stale relative to the US close.
-- The options chapter is a single-day snapshot, not a backtest, because free historical option
-  prices are not available; dividends are projected estimates.
+- Free historical option prices are not available, so the options chapter's history is a model
+  estimate (Black-Scholes from trailing realised volatility, scaled by today's implied/realised ratio
+  and spreads); today's structures use a single-day snapshot, and dividends are projected estimates.
+- The second price source (Nasdaq) covers only the last ten years, so 2010-2016 prices are checked
+  by the total-return rebuild, the calendar and the large-move rules, not by a second source.
 - Full details in the Known limitations of `CLAUDE.md` and in [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
 
 ## Built with
 
-Python, pandas, statsmodels, Streamlit and Plotly (with NumPy, SciPy and yfinance).
+Python, pandas, statsmodels, Streamlit and Plotly (with NumPy, SciPy, yfinance, pandas_market_calendars
+and fpdf2).
 
 Developed with AI pair-programming (Claude Code); methodology decisions, reviews and corrections
 are documented in [docs/METHODOLOGY.md](docs/METHODOLOGY.md).

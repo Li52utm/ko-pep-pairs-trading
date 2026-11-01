@@ -40,6 +40,7 @@ def direction_label(row: pd.Series) -> str:
 
 ui.apply_theme()
 ui.chapter_heading(**ui.CHAPTERS["pair_hunt"])
+ui.question_box("pair_hunt")
 
 hunt = ui.load_pair_hunt()
 if hunt is None:

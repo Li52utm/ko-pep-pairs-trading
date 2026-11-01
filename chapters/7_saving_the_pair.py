@@ -61,7 +61,7 @@ ui.chapter_heading(**ui.CHAPTERS["saving_the_pair"])
 # --------------------------------------------------------------------------- #
 # The answer, from the historical protection model (options.protected_backtest)
 # --------------------------------------------------------------------------- #
-QUESTION = "Do options save the pair?"
+QUESTION = ui.QUESTIONS["saving_the_pair"]
 protection = ui.get_protection()
 if not protection["ok"]:
     ui.answer_box(QUESTION, "Not available yet",

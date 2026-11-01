@@ -141,15 +141,16 @@ downgrades = [WHY[x["rule"]] for x in reasons if x["change"] < 0 and x["rule"] i
 # --------------------------------------------------------------------------- #
 ui.apply_theme()
 ui.chapter_heading(**ui.CHAPTERS["trade_idea"])
+ui.answer_box(ui.QUESTIONS["trade_idea"], *wording.trade_today_answer(rec))
 
 as_of = state["as_of"]
 st.html(
     '<p class="desk-title">KO / PEP relative value: desk note</p>'
     f'<p class="desk-meta">As of the close on {as_of:%d %B %Y} · default signal settings · '
-    f'per {money(CAPITAL)} of capital</p>'
+    f'per ${CAPITAL / 1e6:g}m of capital</p>'
 )
 note_md += ["# KO / PEP relative value: desk note",
-            f"As of the close on {as_of:%d %B %Y}, default signal settings, per {money(CAPITAL)} of capital."]
+            f"As of the close on {as_of:%d %B %Y}, default signal settings, per ${CAPITAL / 1e6:g}m of capital."]
 
 # --------------------------------------------------------------------------- #
 # a) Recommendation
@@ -190,7 +191,7 @@ else:
     say(f"The model trades when z moves beyond ±{ENTRY:g}: above KO {usd(trigger_hi)} it would sell Coke and "
         f"buy Pepsi, below {usd(trigger_lo)} the reverse (Pepsi at {usd(state['pep'])}, today's fair value held). "
         f"The figures below are for the side z leans to, {spread_words}.")
-say(f"Sized as in the backtest (gross split 1 : |beta| between the legs, at the last close):")
+say("Sized as in the backtest (gross split 1 : |beta| between the legs, at the last close):")
 bullets([
     f"{ko_verb} {abs(ticket['shares_ko']):,.0f} KO ({money(abs(ticket['notional_ko']))})",
     f"{pep_verb} {abs(ticket['shares_pep']):,.0f} PEP ({money(abs(ticket['notional_pep']))})",

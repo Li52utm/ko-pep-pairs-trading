@@ -527,6 +527,13 @@ def show_chart(fig: go.Figure, title: str | None = None, height: int = 380, cont
     if title:
         target.html(f'<div class="chart-title">{html.escape(title)}</div>')
     target.plotly_chart(style_figure(fig, height=height), width="stretch")
+    target.caption(source_line())
+
+
+def source_line() -> str:
+    """The source line under every chart."""
+    last = data_as_of()
+    return f"Source: Yahoo Finance, FRED; project calculations. Data as of {last.day} {last:%B %Y}."
 
 
 # --------------------------------------------------------------------------- #
@@ -552,6 +559,61 @@ CHAPTERS = {
     "saving_the_pair": dict(numeral="VII", title="Saving the Pair",
                             subtitle="Can options do what the stop-loss couldn't?"),
 }
+
+# The question each chapter answers (README's chapter table states the same questions).
+QUESTIONS = {
+    "story": "Does the textbook pair trade work?",
+    "backtest": "Does it make money after costs?",
+    "research": "Does tuning the settings help?",
+    "twist": "Does cheap Swiss franc funding help?",
+    "trade_idea": "Is there a trade today?",
+    "pair_hunt": "Is any pair better than luck?",
+    "saving_the_pair": "Do options save the pair?",
+}
+
+
+def question_box(key: str) -> None:
+    """The question / the answer box for chapters I-IV and VI, generated from the cached results.
+
+    Chapters V and VII compute their own answer (the desk-note recommendation, the protection
+    model) and call answer_box with QUESTIONS[key] directly.
+    """
+    question = QUESTIONS[key]
+    if key in ("story", "backtest"):
+        summary = get_summary()
+        r, t = summary["returns"], summary["trades"]
+        if key == "story":
+            answer = wording.textbook_answer(r["total_return"], r["sharpe"], t["win_rate"], t["n_trades"])
+        else:
+            _, trades = get_backtest()
+            answer = wording.costs_answer(float(trades["gross_pnl"].sum()), float(trades["total_costs"].sum()),
+                                          float(trades["net_pnl"].sum()))
+    elif key == "research":
+        research = load_research()
+        if research is None:
+            return
+        grid, selected, _ = research
+        chosen = grid[grid["combo_id"] == selected["combo_id"]].iloc[0]
+        from trade_idea import default_test_sharpe  # trade_idea imports research; keep ui's import list short
+        answer = wording.tuning_answer(float(chosen["train_sharpe"]), float(chosen["test_sharpe"]),
+                                       default_test_sharpe(grid), int((grid["test_sharpe"] > 0).sum()), len(grid))
+    elif key == "twist":
+        snb = snb_carry(get_carry_results()["carry only"])
+        years = snb["years_before"] if snb["years_before"] == snb["years_before"] else snb["years_all"]
+        answer = wording.carry_answer(float(get_carry_scenarios()["carry only"].iloc[-1]), float(snb["total_dE"]),
+                                      years)
+    elif key == "pair_hunt":
+        hunt = load_pair_hunt(quiet=True)
+        if hunt is None:
+            return
+        best = hunt["mined"].iloc[0]
+        beaten = int((hunt["luck"]["best_sharpe"] < best["sharpe"]).sum())
+        answer = wording.luck_answer(beaten, len(hunt["luck"]), best["pair"], float(best["sharpe"]),
+                                     hunt["summary"]["walk_forward"]["mined"]["strategy"]["sharpe"])
+    else:
+        raise ValueError(f"{key} computes its own answer; call answer_box")
+    answer_box(question, *answer)
+
 
 _CSS = f"""
 <style>

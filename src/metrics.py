@@ -403,6 +403,72 @@ def format_summary(summary: dict) -> str:
     return "\n".join(lines)
 
 
+# --------------------------------------------------------------------------- #
+# Risk analytics for The Backtest: market neutrality, monthly returns, rolling Sharpe, VaR
+# --------------------------------------------------------------------------- #
+VAR_LEVELS = (0.95, 0.99)
+ROLLING_SHARPE_DAYS = 252
+
+
+def newey_west_lags(n: int) -> int:
+    """The usual rule of thumb for Newey-West lags: floor(4 (n / 100)^(2/9))."""
+    return int(4 * (n / 100) ** (2 / 9))
+
+
+def market_regression(strategy: pd.Series, market: pd.Series, lags: int | None = None) -> dict:
+    """OLS of daily strategy returns on daily market returns, with Newey-West (HAC) errors.
+
+        r_strategy_t = alpha + beta * r_market_t + e_t
+
+    alpha is annualised x 252 (returns do not compound, see the module docstring). Newey-West
+    standard errors allow for autocorrelation and changing volatility, which daily trading
+    returns have (a position held for weeks makes neighbouring days alike).
+    """
+    import statsmodels.api as sm  # only needed here
+
+    both = pd.concat([strategy, market], axis=1, keys=["strategy", "market"]).dropna()
+    n = len(both)
+    lags = newey_west_lags(n) if lags is None else lags
+    fit = sm.OLS(both["strategy"], sm.add_constant(both["market"])).fit(cov_type="HAC", cov_kwds={"maxlags": lags})
+    return {
+        "beta": float(fit.params["market"]), "beta_t": float(fit.tvalues["market"]),
+        "alpha_annual": float(fit.params["const"] * TRADING_DAYS), "alpha_t": float(fit.tvalues["const"]),
+        "r2": float(fit.rsquared), "n": n, "lags": lags,
+        "start": both.index[0], "end": both.index[-1],
+    }
+
+
+def monthly_returns(net_pnl: pd.Series, capital: float) -> pd.DataFrame:
+    """Return on capital per calendar month (sum of daily P&L / capital): rows years, columns 1-12."""
+    monthly = (net_pnl / capital).groupby([net_pnl.index.year, net_pnl.index.month]).sum()
+    table = monthly.unstack()
+    table.index.name, table.columns.name = "year", "month"
+    return table.reindex(columns=range(1, 13))
+
+
+def rolling_sharpe(returns: pd.Series, window: int = ROLLING_SHARPE_DAYS) -> pd.Series:
+    """Annualised Sharpe ratio over the trailing `window` days (NaN until the window is full)."""
+    mean = returns.rolling(window).mean()
+    std = returns.rolling(window).std(ddof=1)
+    return (mean / std.where(std > 0)) * np.sqrt(TRADING_DAYS)
+
+
+def var_es(returns: pd.Series, levels: tuple[float, ...] = VAR_LEVELS) -> dict[float, dict]:
+    """Historical one-day value at risk and expected shortfall, as positive losses (fractions of capital).
+
+    VaR at level c: the loss exceeded on only (1 - c) of days = -quantile(returns, 1 - c).
+    ES at level c: the average loss on the days at or beyond that quantile.
+    Every day counts, including days with no position (a 0 return).
+    """
+    out = {}
+    clean = returns.dropna()
+    for level in levels:
+        cutoff = clean.quantile(1 - level)
+        tail = clean[clean <= cutoff]
+        out[level] = {"var": float(-cutoff), "es": float(-tail.mean()), "days_in_tail": len(tail)}
+    return out
+
+
 if __name__ == "__main__":
     from backtest import run_backtest
     from data import load_all_data

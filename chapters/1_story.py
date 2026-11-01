@@ -115,6 +115,7 @@ def bet_words(direction: int) -> tuple[str, str]:
 # --------------------------------------------------------------------------- #
 ui.apply_theme()
 ui.chapter_heading(**ui.CHAPTERS["story"])
+ui.question_box("story")
 
 with st.expander("What do these words mean?"):
     st.markdown(

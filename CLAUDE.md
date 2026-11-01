@@ -7,7 +7,8 @@ through in an interview.
 
 ## Layout
 
-- `src/` – library code (data, signals, backtest, metrics, research, carry, trade_idea, universe, pair_hunt, ui)
+- `src/` – library code (data, signals, backtest, metrics, research, carry, trade_idea, universe, pair_hunt,
+  options, validation, pipeline, readme_block, tearsheet, wording, ui)
 - `app.py` + `chapters/` – Streamlit dashboard (router + one file per chapter)
 - `tests/` – pytest tests
 - `data/` – cached CSV downloads (git-ignored, safe to delete)
@@ -375,13 +376,36 @@ hand-built examples in `tests/test_validation.py`; thresholds are constants at t
   `price_levels` (KO price at a given z with PEP and today's fair value fixed), `trade_ticket`
   (backtest sizing), `historical_analogues` and `conviction` (documented rules, constants at the
   top of the module). The page collects every line it shows into the downloadable Markdown note.
+  It is a sell-side style desk note in this order: a) recommendation box (`recommendation`: Recommend
+  only if conviction is High AND the analogues' expected value is positive; Watch if Medium; otherwise
+  Avoid), b) three key points, c) the trade, d) risk/reward (`risk_reward`: P&L at target vs stop, the
+  ratio, EV = win rate x target + (1 - win rate) x stop, and the analogues' actual average), e) scenario
+  heatmap (`scenario_grid`, KO and PEP -6%..+6%, after costs), f) market exposure (`market_betas` over
+  the past 252 days, `market_exposure` net dollar beta and S&P +/-5% P&L, `exposure_note`; neutral if
+  under `NEUTRAL_SHARE` = 10% of gross), g) catalysts (`results/catalysts.json` from the refresh,
+  `catalysts_in_window`; missing dates show "not available", an unannounced ex-dividend date is
+  projected from the option snapshot's dividend history), h) liquidity (`liquidity` vs the 20-day
+  average volume in `results/volume_snapshot.csv`, days to exit at 10% of volume), i) risks and what
+  would change my view, j) disclosures, k) "Would I recommend this trade to a client?" (`client_line`:
+  Yes / Not yet / No). Tests: `tests/test_desk_note.py`.
 - The Pair Hunt reads `results/pair_hunt_*` through the cached `ui.load_pair_hunt()` (cache key
   includes the file modification times); it never recomputes. `pair_hunt_windows.csv` holds, per
   walk-forward window, `n_tested`, `n_passing` and `n_expected_by_chance`. The Story's fourth lesson
   uses the same files and is skipped if they are missing. `pair_hunt.py --walk-forward-only`
   reruns step d) alone.
 - The Backtest's "Execution and slippage" section uses `ui.get_execution_tables()` (default
-  settings, not the sidebar): `metrics.exit_slippage` and the execution lag table.
+  settings, not the sidebar): `metrics.exit_slippage` and the execution lag table. For the sidebar
+  settings it also shows market neutrality (`metrics.market_regression`: daily returns on SPY,
+  Newey-West errors, full sample and test period; `wording.market_neutrality_sentence`), a monthly
+  returns heatmap (`monthly_returns`), the rolling one-year Sharpe (`rolling_sharpe`), historical VaR
+  and expected shortfall at 95% / 99% (`var_es`), and a "Download tear sheet" PDF
+  (`src/tearsheet.py`, fpdf2, pure Python). Tests: `tests/test_risk.py`.
+- Every chapter opens, under the heading, with a "The question / The answer" box (`ui.answer_box`).
+  Questions: `ui.QUESTIONS`. Chapters I-IV and VI call `ui.question_box(key)`, which builds the answer
+  from the cached results with `wording.textbook_answer`, `costs_answer`, `tuning_answer`,
+  `carry_answer`, `luck_answer`; V uses the desk-note recommendation (`trade_today_answer`) and VII the
+  protection model. Every chart shows `ui.source_line()` ("Source: Yahoo Finance, FRED; project
+  calculations. Data as of DATE.") under it, from `ui.show_chart`.
 - Saving the Pair (chapter VII) prices listed options on the SHORT leg of today's trade
   (`src/options.py`, tests in `tests/test_options.py`). It reads a snapshot,
   `results/options_snapshot_<TICKER>.csv` + `results/options_dividends_<TICKER>.csv`, through
@@ -398,6 +422,18 @@ hand-built examples in `tests/test_validation.py`; thresholds are constants at t
   backs out each call's implied volatility from its own mid (`implied_vol`, Black-Scholes with
   scipy `brentq`); Yahoo's `impliedVolatility` is only shown for comparison. Interest on short-sale
   proceeds is ignored, as in the backtest.
+  The chapter opens with the answer to "Do options save the pair?" from `options.protected_backtest`
+  (a MODEL ESTIMATE, labelled so in code and on the page): for every backtest trade, a call on each
+  short leg struck at that trade's stop-level price (`leg_stop_strike`, frozen at entry),
+  `PROTECTION_LIFE = 21` trading days, rolled at the same strike; Black-Scholes with q = 0 (adjusted
+  prices include dividends), vol = trailing `VOL_WINDOW = 60`-day realised vol up to the purchase day x
+  today's implied/realised ratio for the most similar moneyness (`snapshot_call_terms`), rate = that
+  day's T-bill; bought at model + half today's relative spread, sold at the trade's exit at model - half.
+  `protection_answer`: Yes if the protected total P&L and Sharpe are both positive; Partly if protection
+  improves the Sharpe or the worst trade but the total stays negative; otherwise No. Sentences:
+  `wording.protection_answer_sentences`, `edge_sentence`, `save_the_pair_sentences` (section ix, "What
+  would actually save the pair?", from the research and Pair Hunt results). Wrapper:
+  `ui.get_protection()`. The README block's options finding uses the same result.
 - Every sentence that states a verdict (made/lost, but/and, "no better than luck", "did not beat
   cash", "worth it") is built by a pure function in `src/wording.py`, so it follows the numbers;
   `tests/test_wording.py` flips each sign. Never type a conclusion or a parameter value into page

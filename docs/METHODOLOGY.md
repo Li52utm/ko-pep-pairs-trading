@@ -170,3 +170,72 @@ inside the period.
 - The effect is not monotonic: lag 2 does better than lag 1. With 114 trades, a one-day timing
   shift moves the Sharpe by about 0.1, the same size as the noise between settings. No lag
   turns the strategy into a clearly profitable one.
+
+## Additions on 2026-11-01
+
+These add measurements and checks; none of them changes the backtest's trades or P&L. Current
+results are generated, not typed: see the dashboard, the README key findings and
+[DATA_VALIDATION.md](DATA_VALIDATION.md).
+
+### Data validation (`src/validation.py`, `scripts/validate_data.py`)
+
+Eight checks, each PASS (agrees with a reference), WARN (a documented difference with no material
+effect) or FAIL (the data is wrong). The scheduled refresh runs them on the fresh downloads before
+writing anything and stops on any FAIL.
+
+- **Second source.** Nasdaq's public quote history (no API key) is the only free daily source found
+  to work on 2026-11-01: pandas-datareader no longer supports Stooq and Stooq's site needs a browser
+  challenge; WSJ and MarketWatch block scripts; Alpha Vantage and FMP need a key. It covers the last
+  ten years only. Yahoo's split-adjusted close and Nasdaq's close are compared as daily returns. The
+  only days differing by more than 1 point are spin-offs, which Yahoo records as fractional splits
+  (PFE 2020, MRK 2021, T 2022, FDX 2026) and each source adjusts by its own factor.
+- **Total return rebuild.** Raw closes (Yahoo's split adjustment undone), dividends and splits rebuild
+  the adjusted-close returns to within about 1e-6 a day.
+- **Calendar, large moves, dividends.** NYSE sessions from pandas_market_calendars; every adjusted
+  move above 8% confirmed by the second source where it exists; dividends counted per year.
+- **USD/CHF timing (rule changed during the first run).** The FX check first required a daily
+  return correlation of at least 0.8 between Yahoo and FRED DEXSZUS at the best lag. The first run
+  measured 0.784 (Yahoo day t vs FRED day t-1) and 0.250 at the same day. Two series quoted h hours
+  apart have a daily correlation of about (24 - h) / 24 even if both are exact, so the 0.78 / 0.25
+  split implies Yahoo's bar is about 6 hours after FRED's noon New York fix: a timing difference, not
+  bad data (already listed under Known limitations in CLAUDE.md). The rule now tests what bad data
+  would break: at the best lag, the median level gap (0.11%) and the correlation of 20-day returns
+  (0.990), plus the SNB move appearing in both sources. A best lag other than zero is a WARN.
+
+### Do options save the pair? (`options.protected_backtest`, a model estimate)
+
+For every backtest trade, a call on the short leg struck at that trade's stop-level price (frozen at
+entry), 21 trading days to expiry, rolled at the same strike while the trade is open. Black-Scholes
+with q = 0 (adjusted prices already contain dividends); volatility = trailing 60-day realised
+volatility up to the purchase day × today's implied/realised ratio for the call of most similar
+moneyness; rate = the T-bill on the purchase day; bought at model value plus half today's relative
+spread for that call and sold at the trade's exit at model value minus half. Only the volatility
+ratio and the spread come from today; every price input is from the purchase day or before.
+Tests: the protected loss never exceeds the cap plus premium; changing later prices leaves strike,
+volatility and premium unchanged; Black-Scholes matches Hull's 10.4506 example.
+
+Known bias: real implied volatility rises in stressed markets, exactly when protection matters, so
+a constant implied/realised ratio probably understates what past calls would have cost.
+
+### Trade Idea rules (`trade_idea.py`)
+
+- Recommendation: Recommend only if conviction is High and the expected value from the analogues is
+  positive; Watch if conviction is Medium; otherwise Avoid. Expected value = analogue win rate × P&L
+  at target + (1 - win rate) × P&L at stop (it assumes every trade ends at one of the two; the
+  analogues' actual average P&L is shown beside it).
+- Market exposure: each stock's beta to SPY from the past 252 daily returns; net dollar beta =
+  KO notional × KO beta + PEP notional × PEP beta; "close to market-neutral" if it is under 10% of
+  the gross notional.
+- Liquidity: each leg as a share of its 20-day average volume; days to exit at 10% of that volume.
+- Catalysts: next earnings and ex-dividend dates from Yahoo, fetched by the refresh; a missing date
+  shows as "not available" and an unannounced ex-dividend date is projected from the dividend history
+  (labelled as projected).
+
+### Market neutrality and risk (`metrics.py`)
+
+- Daily strategy return (net P&L / capital) regressed on SPY's daily return, full sample and test
+  period, with Newey-West (HAC) standard errors and floor(4 (n/100)^(2/9)) lags; alpha annualised
+  × 252 because returns do not compound.
+- Historical one-day VaR and expected shortfall at 95% and 99% over every day, including flat days.
+- Monthly returns (sum of daily P&L / capital), rolling 252-day Sharpe, and a one-page PDF tear sheet
+  built with fpdf2 (pure Python, so it works on Streamlit Cloud).

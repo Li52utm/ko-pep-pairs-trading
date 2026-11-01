@@ -278,3 +278,92 @@ def save_the_pair_sentences(best_test_sharpe: float, n_positive: int, n_settings
          "spread will converge (for example earnings or flows), tested out of sample before any money is risked."),
     ]
     return lines
+
+
+# --------------------------------------------------------------------------- #
+# The question / the answer: one per chapter (shown under each chapter heading)
+# --------------------------------------------------------------------------- #
+def textbook_answer(total_return: float, sharpe: float, win_rate: float, n_trades: int) -> tuple[str, str]:
+    """I. Does the textbook pair trade work?"""
+    works = total_return > 0 and sharpe > 0
+    return ("Yes" if works else "No",
+            f"With the default settings it won {win_rate:.0%} of {n_trades} trades {contrast(win_rate, total_return)} "
+            f"{made_or_lost(total_return)} {abs(total_return):.1%} in total, a Sharpe ratio of {sharpe:.2f}.")
+
+
+def costs_answer(gross: float, costs: float, net: float) -> tuple[str, str]:
+    """II. Does it make money after costs?"""
+    return ("Yes" if net > 0 else "No",
+            f"With the default settings it {made_or_lost(gross)} {_k(abs(gross))} before costs; trading and borrow "
+            f"costs took {_k(costs)}, "
+            f"leaving {_k(net)} after costs.")
+
+
+def tuning_answer(train_sharpe: float, test_sharpe: float, default_test: float, n_positive: int,
+                  n_settings: int) -> tuple[str, str]:
+    """III. Does tuning the settings help?"""
+    helps = test_sharpe > 0 and test_sharpe > default_test
+    return ("Yes" if helps else "No",
+            f"The best of {n_settings} settings on the training years scored a Sharpe ratio of {train_sharpe:.2f}, "
+            f"then {test_sharpe:.2f} on the test years (the defaults: {default_test:.2f}); {n_positive} of "
+            f"{n_settings} settings had a positive test Sharpe.")
+
+
+def carry_answer(carry_total: float, snb_change: float, years: float) -> tuple[str, str]:
+    """IV. Does cheap Swiss franc funding help?"""
+    if carry_total <= 0:
+        answer = "No"
+    elif snb_change < 0 and years == years and years > 1:
+        answer = "Partly"
+    else:
+        answer = "Yes"
+    def chf(x: float) -> str:
+        return f"CHF {abs(x) / 1e3:.1f}k"
+
+    tail = (f", but the Swiss National Bank's move cost {chf(snb_change)} in a day, about {years:.0f} years of "
+            "the interest it earned" if answer == "Partly" else "")
+    return answer, f"Funding with a franc loan {earned_or_cost(carry_total)} {chf(carry_total)} of carry over the whole period{tail}."
+
+
+def trade_today_answer(recommendation: str) -> tuple[str, str]:
+    """V. Is there a trade today? (from trade_idea.recommendation)"""
+    answer = {"Recommend": "Yes", "Watch": "Not yet", "Avoid": "No"}[recommendation]
+    return answer, (f"The desk note below rates the KO/PEP spread {recommendation}, by the documented rules in its "
+                    "disclosures.")
+
+
+def luck_answer(beaten: int, sims: int, best_pair: str, best_sharpe: float, walk_forward_sharpe: float) -> tuple[str, str]:
+    """VI. Is any pair better than luck?"""
+    share = beaten / sims if sims else float("nan")
+    answer = "Yes" if share >= 0.95 and walk_forward_sharpe > 0 else "No"
+    return answer, (f"The best of hundreds of pairs ({best_pair}, Sharpe {best_sharpe:.2f}) beat the best pair from "
+                    f"random, unrelated stocks in {beaten} of {sims} simulations, and picking pairs without hindsight "
+                    f"gave a Sharpe ratio of {walk_forward_sharpe:.2f}.")
+
+
+# --------------------------------------------------------------------------- #
+# The Backtest: market neutrality and value at risk
+# --------------------------------------------------------------------------- #
+MATERIAL_R2 = 0.05  # the market explains at least 5% of the daily P&L variation: material exposure
+SIGNIFICANT_T = 2.0  # |t| at least 2: roughly 5% two-sided significance
+
+
+def market_neutrality_sentence(full: dict, test: dict, test_label: str) -> str:
+    """How much of the result is market exposure, from the two regressions (metrics.market_regression)."""
+    exposure = ("almost none of the result is market exposure" if full["r2"] < MATERIAL_R2 else
+                "a material part of the result is market exposure")
+    significance = ("not distinguishable from zero" if abs(full["alpha_t"]) < SIGNIFICANT_T else
+                    f"statistically significant and {'positive' if full['alpha_annual'] > 0 else 'negative'}")
+    return (f"The S&P 500 (SPY) explains {full['r2']:.1%} of the day-to-day variation in the strategy's returns over "
+            f"the full sample ({test['r2']:.1%} {test_label}), with a beta of {full['beta']:.3f}: {exposure}. The "
+            f"alpha, the return not explained by the market, is {full['alpha_annual']:+.1%} a year with a Newey-West "
+            f"t-statistic of {full['alpha_t']:.2f}, so it is {significance}.")
+
+
+def var_sentence(risk: dict, capital: float) -> str:
+    """Historical VaR and expected shortfall in words (metrics.var_es, fractions of capital)."""
+    v95, v99 = risk[0.95], risk[0.99]
+    return (f"On 95% of days the strategy lost less than {v95['var']:.2%} of capital (${v95['var'] * capital / 1e3:,.1f}k "
+            f"per ${capital / 1e6:g}m); on the worst 5% of days it lost {v95['es']:.2%} on average. At 99% the figures "
+            f"are {v99['var']:.2%} and {v99['es']:.2%}. These are historical one-day measures over every day, "
+            "including days with no position.")

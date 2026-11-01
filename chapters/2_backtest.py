@@ -16,8 +16,12 @@ import plotly.graph_objects as go  # noqa: E402
 import streamlit as st  # noqa: E402
 from plotly.subplots import make_subplots  # noqa: E402
 
+from data import MARKET_TICKER  # noqa: E402
+import metrics  # noqa: E402
+import tearsheet  # noqa: E402
 import ui  # noqa: E402
 import validation  # noqa: E402
+import wording  # noqa: E402
 from research import BETA_MODES, GRID_AXES, TEST_START  # noqa: E402
 
 ui.apply_theme()
@@ -122,6 +126,7 @@ with st.sidebar:
 # --------------------------------------------------------------------------- #
 s = st.session_state
 ui.chapter_heading(**ui.CHAPTERS["backtest"])
+ui.question_box("backtest")
 ui.note(
     "Tuning settings on the full history is exactly how overfitting happens. "
     "See chapter III, The Research, for the honest train/test version.",
@@ -284,6 +289,81 @@ fig.add_bar(x=yearly.index.astype(str), y=yearly["return"],
             name="Return")
 fig.update_yaxes(title_text="Return on capital", tickformat=".0%")
 ui.show_chart(fig, "Yearly returns", container=right)
+
+
+# --------------------------------------------------------------------------- #
+# Risk and market exposure (for the settings in the sidebar)
+# --------------------------------------------------------------------------- #
+returns = daily["daily_return"]
+market = ui.get_data()[MARKET_TICKER].pct_change()
+
+st.subheader("Market neutrality")
+full_fit = metrics.market_regression(returns, market)
+test_fit = metrics.market_regression(returns.loc[TEST_START:], market.loc[TEST_START:])
+test_label = f"since {TEST_START[:4]}"
+st.dataframe(pd.DataFrame({
+    "Period": [f"Full sample ({full_fit['start']:%Y}-{full_fit['end']:%Y})", f"Test period ({test_label})"],
+    "Beta to SPY": [f"{f['beta']:.3f}" for f in (full_fit, test_fit)],
+    "Alpha (a year)": [ui.fmt_pct(f["alpha_annual"], sign=True) for f in (full_fit, test_fit)],
+    "Alpha t-stat (Newey-West)": [f"{f['alpha_t']:.2f}" for f in (full_fit, test_fit)],
+    "R²": [ui.fmt_pct(f["r2"], 2) for f in (full_fit, test_fit)],
+    "Days": [f["n"] for f in (full_fit, test_fit)],
+}), hide_index=True, width="stretch")
+st.markdown(ui.escape_dollars(wording.market_neutrality_sentence(full_fit, test_fit, test_label)))
+st.caption(f"Daily strategy return (net P&L / capital) regressed on SPY's daily return; Newey-West standard "
+           f"errors with {full_fit['lags']} lags (full sample) and {test_fit['lags']} (test).")
+
+monthly = metrics.monthly_returns(daily["net_pnl"], capital)
+limit = float(monthly.abs().max().max())
+fig = go.Figure(go.Heatmap(
+    z=monthly.values, x=[pd.Timestamp(2000, m, 1).strftime("%b") for m in monthly.columns],
+    y=[str(y) for y in monthly.index], zmin=-limit, zmax=limit,
+    colorscale=[[0, ui.COLORS["loss"]], [0.5, ui.COLORS["surface"]], [1, ui.COLORS["gain"]]],
+    text=[["" if v != v else f"{v:+.1%}" for v in row] for row in monthly.values], texttemplate="%{text}",
+    textfont=dict(size=9), colorbar=dict(title="Return", tickformat=".0%"),
+    hovertemplate="%{y} %{x}: %{text}<extra></extra>"))
+fig.update_yaxes(autorange="reversed", type="category")
+ui.show_chart(fig, "Monthly return on capital", height=520)
+
+rolling = metrics.rolling_sharpe(returns)
+fig = go.Figure()
+fig.add_hline(y=0, line=ui.ref_line())
+fig.add_scatter(x=rolling.index, y=rolling, mode="lines", name="Rolling Sharpe",
+                line=dict(color=ui.COLORS["ink"], width=1.4))
+fig.update_yaxes(title_text="Sharpe ratio")
+ui.show_chart(fig, f"Rolling one-year Sharpe ratio ({metrics.ROLLING_SHARPE_DAYS} trading days)", height=300)
+st.caption(f"Positive in {(rolling.dropna() > 0).mean():.0%} of the one-year windows; "
+           f"range {rolling.min():.2f} to {rolling.max():.2f}.")
+
+st.subheader("Value at risk")
+risk = metrics.var_es(returns)
+ui.kpi_row([(f"{label} at {level:.0%}", ui.fmt_pct(risk[level][key], 2), None,
+             ui.fmt_money(-risk[level][key] * capital))
+            for level in metrics.VAR_LEVELS for key, label in (("var", "VaR"), ("es", "Expected shortfall"))])
+st.markdown(ui.escape_dollars(wording.var_sentence(risk, capital)))
+
+# One-page PDF tear sheet of what this page shows (src/tearsheet.py, pure Python).
+r = summary["returns"]
+t = summary["trades"]
+drawdown_dollars = daily["equity"] - daily["equity"].cummax().clip(lower=capital)
+stats = [
+    ("Total return", ui.fmt_pct(r["total_return"], sign=True)), ("Sharpe ratio", ui.fmt_num(r["sharpe"])),
+    ("Max drawdown", ui.fmt_pct(r["max_drawdown_pct"])), ("Trades", f"{t['n_trades']}"),
+    ("Win rate", ui.fmt_pct(t["win_rate"])), ("Beta to SPY", f"{full_fit['beta']:.3f}"),
+    ("Alpha t-stat (NW)", f"{full_fit['alpha_t']:.2f}"),
+    ("95% one-day VaR", ui.fmt_pct(risk[0.95]["var"], 2)),
+]
+as_of = ui.data_as_of()
+pdf = tearsheet.build_tearsheet(
+    "KO / PEP pairs trade: tear sheet",
+    f"Settings: window {params.get('window', ui.SIGNAL_DEFAULTS['window'])}, entry {params.get('entry', ui.SIGNAL_DEFAULTS['entry']):g}, "
+    f"exit {params.get('exit', ui.SIGNAL_DEFAULTS['exit']):g}, stop {params.get('stop', ui.SIGNAL_DEFAULTS['stop']):g}; "
+    f"${capital / 1e6:g}m capital; data to {as_of:%d %B %Y}",
+    stats, daily["equity"], drawdown_dollars, monthly,
+    [ui.source_line(), "Signals at the close of day t, traded at the close of day t+1; costs and short borrow included.",
+     "Illustrative only. Not investment advice."])
+st.download_button("Download tear sheet (PDF)", data=pdf, file_name=f"ko-pep-tear-sheet-{as_of:%Y-%m-%d}.pdf",
+                   mime="application/pdf")
 
 
 # --------------------------------------------------------------------------- #
