@@ -75,7 +75,10 @@ else:
     sentences = wording.protection_answer_sentences(answer, totals, protection["share_paid"],
                                                     protection["protection_net"], protection["n_trades"], first_year,
                                                     protection["n_open"])
-    ui.answer_box(QUESTION, answer, " ".join(sentences))
+    every = protection["every"]
+    rule = wording.strike_rule_sentence(protection["n_not_protectable"], op.STRIKE_BAND, after["total_pnl"],
+                                        every["totals"]["protected"]["total_pnl"])
+    ui.answer_box(QUESTION, answer, " ".join(sentences) + " " + rule)
 
     # ----------------------------------------------------------------------- #
     # i. Protection across every trade since 2010
@@ -87,22 +90,46 @@ else:
             f"moneyness, rate = that day's T-bill, spread = today's relative bid/ask spread for that call. "
             f"Each call is struck at the trade's stop-level price (frozen at entry), expires after "
             f"{op.PROTECTION_LIFE} trading days and is rolled at the same strike if the trade is still open.")
+    low, high = op.STRIKE_BAND
+    md(f"Two rules, shown side by side as a sensitivity check. **Original rule:** every short leg gets its call. "
+       f"**Sensible-strike rule** (used for the answer): a call struck below {low:.2f}x or above {high:.2f}x spot "
+       f"at entry is not protection (deep in the money it is mostly a long stock position, far out of the money it "
+       f"never pays), so that leg is left unprotected. {protection['n_not_protectable']} of "
+       f"{protection['n_trades']} trades are not protectable at the stop level.")
+    pe, pb = every["totals"]["protected"], after
     rows = [
-        ("Total P&L", ui.fmt_money(before["total_pnl"]), ui.fmt_money(after["total_pnl"])),
-        ("Sharpe ratio", ui.fmt_num(before["sharpe"]), ui.fmt_num(after["sharpe"])),
-        ("Maximum drawdown", ui.fmt_money(before["max_drawdown"]), ui.fmt_money(after["max_drawdown"])),
-        ("Worst trade", ui.fmt_money(before["worst_trade"]), ui.fmt_money(after["worst_trade"])),
-        ("Trades where the protection paid", "", ui.fmt_pct(protection["share_paid"], 0)),
-        ("Premium paid (all calls, incl. rolls)", "", ui.fmt_money(protection["total_premium"])),
-        ("Received back (expiries and resales)", "", ui.fmt_money(protection["total_payoff"])),
+        ("Total P&L", before["total_pnl"], pe["total_pnl"], pb["total_pnl"]),
+        ("Sharpe ratio", before["sharpe"], pe["sharpe"], pb["sharpe"]),
+        ("Maximum drawdown", before["max_drawdown"], pe["max_drawdown"], pb["max_drawdown"]),
+        ("Worst trade", before["worst_trade"], pe["worst_trade"], pb["worst_trade"]),
     ]
-    st.dataframe(pd.DataFrame(rows, columns=["", "Unprotected", "Protected (model)"]),
+    table_rows = [(name, ui.fmt_num(a) if name == "Sharpe ratio" else ui.fmt_money(a),
+                   ui.fmt_num(b) if name == "Sharpe ratio" else ui.fmt_money(b),
+                   ui.fmt_num(c) if name == "Sharpe ratio" else ui.fmt_money(c)) for name, a, b, c in rows]
+    table_rows += [
+        ("Trades where the protection paid", "", ui.fmt_pct(every["share_paid"], 0),
+         ui.fmt_pct(protection["share_paid"], 0)),
+        ("Trades protected", "", f"{every['n_protected']}", f"{protection['n_protected']}"),
+        ("Premium paid (all calls, incl. rolls)", "", ui.fmt_money(every["total_premium"]),
+         ui.fmt_money(protection["total_premium"])),
+        ("Received back (expiries and resales)", "", ui.fmt_money(every["total_payoff"]),
+         ui.fmt_money(protection["total_payoff"])),
+    ]
+    st.dataframe(pd.DataFrame(table_rows, columns=["", "Unprotected", "Protected: every trade (original rule)",
+                                                   "Protected: sensible strikes (answer)"]),
                  hide_index=True, width="stretch")
+    skipped = protection["trades"][protection["trades"]["not_protectable"]]
+    if len(skipped):
+        st.caption("Not protectable at the stop level: " + "; ".join(
+            f"{day(row['entry_date'])} ({row['excluded_legs']})" for _, row in skipped.iterrows()) + ".")
     curves = protection["daily"].cumsum() + bt["capital"]
+    every_curve = every["daily"]["protected"].cumsum() + bt["capital"]
     fig = go.Figure()
     fig.add_scatter(x=curves.index, y=curves["unprotected"], name="Unprotected",
                     line=dict(color=ui.COLORS["slate"], width=1.6))
-    fig.add_scatter(x=curves.index, y=curves["protected"], name="Protected (model estimate)",
+    fig.add_scatter(x=every_curve.index, y=every_curve, name="Protected, every trade (original rule)",
+                    line=dict(color=ui.COLORS["amber"], width=1.4, dash="dot"))
+    fig.add_scatter(x=curves.index, y=curves["protected"], name="Protected, sensible strikes (model estimate)",
                     line=dict(color=ui.COLORS["ink"], width=1.6))
     fig.add_hline(y=bt["capital"], line=ui.ref_line())
     fig.update_yaxes(title_text="Equity ($)", tickformat="$,.0f")
@@ -120,6 +147,10 @@ else:
          f"protected; {ui.fmt_money(before['worst_trade'])} unprotected"),
     ])
     md(wording.edge_sentence(protection["gross_pnl"], protection["stock_costs"], protection["protection_net"]))
+    per_trade = protection["trades"]
+    u_worst = per_trade.loc[per_trade["unprotected_pnl"].idxmin()].to_dict()
+    p_worst = per_trade.loc[per_trade["protected_pnl"].idxmin()].to_dict()
+    md(wording.worst_trade_sentence(u_worst, p_worst, day(u_worst["entry_date"]), day(p_worst["entry_date"])))
 
 
 # --------------------------------------------------------------------------- #

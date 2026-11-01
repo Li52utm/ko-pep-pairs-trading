@@ -116,3 +116,40 @@ def test_catalysts_fall_back_to_not_available() -> None:
     assert not rows[("KO", "Ex-dividend (projected)")]["inside"]    # 1 Dec is after
     assert not rows[("PEP", "Earnings")]["inside"] and rows[("PEP", "Ex-dividend")]["date"] is None
     assert ti.holding_window_end(as_of, 13) == pd.Timestamp("2026-11-18")
+
+
+def test_beta_confidence_interval_on_a_known_beta() -> None:
+    import statsmodels.api as sm
+
+    rng = np.random.default_rng(21)
+    market = rng.normal(0, 0.01, 600)
+    days = pd.bdate_range("2023-01-02", periods=601)
+    m = market[-252:] - market[-252:].mean()
+
+    def orthogonal_noise() -> np.ndarray:
+        """Noise with its market component removed over the last 252 days (sample beta exactly 0 there)."""
+        noise = rng.normal(0, 0.008, 600)
+        e = noise[-252:]
+        noise[-252:] = e - (m @ (e - e.mean()) / (m @ m)) * m
+        return noise
+
+    pep = orthogonal_noise()  # one-year beta exactly 0
+    prices = pd.DataFrame({
+        "SPY": 100 * np.cumprod(np.r_[1, 1 + market]),
+        "KO": 50 * np.cumprod(np.r_[1, 1 + 0.6 * market + orthogonal_noise()]),  # one-year beta exactly 0.6
+        "PEP": 80 * np.cumprod(np.r_[1, 1 + pep]),
+    }, index=days)
+    one = ti.market_betas(prices, window=252)
+    low, high = one["ci"]["KO"]
+    assert low < 0.6 < high and low > 0  # covers the true beta, excludes zero
+    # Same interval as statsmodels' OLS confidence interval.
+    r = prices.pct_change().dropna().iloc[-252:]
+    fit = sm.OLS(r["KO"], sm.add_constant(r["SPY"])).fit()
+    assert (low, high) == pytest.approx(tuple(fit.conf_int(alpha=0.05).loc["SPY"]))
+    two = ti.market_betas(prices, window=ti.MARKET_WINDOW_LONG)
+    assert two["days"] == 504
+    note = ti.beta_stability_note(one, two)
+    assert note is not None and "PEP's one-year interval" in note and "unstable" in note  # PEP's beta is zero
+    stable = {"betas": {"KO": 0.6}, "ci": {"KO": (0.4, 0.8)}}
+    assert ti.beta_stability_note(stable, {"betas": {"KO": 0.5}}) is None
+    assert "differ in sign" in ti.beta_stability_note(stable, {"betas": {"KO": -0.1}})

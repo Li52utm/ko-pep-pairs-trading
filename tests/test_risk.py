@@ -94,3 +94,38 @@ def test_carry_and_trade_answers() -> None:
     assert "CHF 17.9k" in text and "CHF 165.1k" in text and "$" not in text  # franc amounts, never dollars
     assert wording.trade_today_answer("Watch")[0] == "Not yet"
     assert wording.trade_today_answer("Recommend")[0] == "Yes"
+
+
+def test_in_market_var_counts_only_days_with_a_position() -> None:
+    # 10 days: flat, a 4-day trade (entry day 2 .. exit day 6), flat again.
+    position = pd.Series([0, 0, 1, 1, 1, 1, 0, 0, 0, 0])
+    returns = pd.Series([0.0, 0.0, -0.001, 0.02, -0.03, 0.01, -0.02, 0.0, 0.0, 0.0])
+    mask = metrics.in_market_days(position)
+    assert mask.tolist() == [False, False, True, True, True, True, True, False, False, False]  # exit day 6 counts
+    out = metrics.var_es_by_exposure(returns, position, levels=(0.8,))
+    assert out["days_in_market"] == 5 and out["share_in_market"] == pytest.approx(0.5)
+    in_market = pd.Series([-0.001, 0.02, -0.03, 0.01, -0.02])
+    # 20% quantile of the 5 in-market returns: sorted[0.8] = -0.03 + 0.8 x 0.01 = -0.022.
+    assert out["in_market"][0.8]["var"] == pytest.approx(0.022)
+    assert out["in_market"][0.8]["es"] == pytest.approx(0.03)
+    assert out["in_market"][0.8] == metrics.var_es(in_market, levels=(0.8,))[0.8]
+    assert out["all"][0.8] == metrics.var_es(returns, levels=(0.8,))[0.8]
+    assert out["in_market"][0.8]["var"] > out["all"][0.8]["var"]  # flat days dilute the all-days figure
+    text = wording.var_sentence({**out, "all": {0.95: out["all"][0.8], 0.99: out["all"][0.8]},
+                                 "in_market": {0.95: out["in_market"][0.8], 0.99: out["in_market"][0.8]}}, 1e6)
+    assert "understate the risk while a trade is on" in text and "is larger than" in text
+
+
+def test_worst_trade_and_strike_rule_sentences() -> None:
+    before = {"entry_date": pd.Timestamp("2012-03-14"), "unprotected_pnl": -88_600, "protected_pnl": -88_600,
+              "stop_reached": False, "net_effect": 0.0, "vol": 0.15}
+    text = wording.worst_trade_sentence(before, before, "14 Mar 2012", "14 Mar 2012")
+    assert "without its short leg ever reaching the stop level" in text and "could not help" in text
+    helped = {**before, "stop_reached": True, "protected_pnl": -45_400}
+    other = {"entry_date": pd.Timestamp("2020-03-30"), "unprotected_pnl": -10_100, "protected_pnl": -92_500,
+             "stop_reached": True, "net_effect": -82_400, "vol": 0.61}
+    text = wording.worst_trade_sentence(helped, other, "14 Mar 2012", "30 Mar 2020")
+    assert "lost $88.6k; its short leg went past" in text and "cut the loss to $45.4k" in text and "a different one: opened on 30 Mar 2020" in text
+    assert "cost $82.4k net, bought when trailing volatility was 61%" in text
+    assert "affects 4 trades" in wording.strike_rule_sentence(4, (0.8, 1.25), -278_000, -283_000)
+    assert "agree" in wording.strike_rule_sentence(0, (0.8, 1.25), -283_000, -283_000)

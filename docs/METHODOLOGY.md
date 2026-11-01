@@ -116,6 +116,42 @@ from the timing of one simulation): the real best pair, VZ/WMT (Sharpe 0.57), be
 random pair in 4 of 21 simulations (19%), against 5 of 23 (22%) before. The conclusion is
 unchanged on every count.
 
+### 2026-11-01: Protection strikes far from spot (chapter VII model)
+
+- **What was wrong:** `options.protected_backtest` bought a call on every short leg at that leg's
+  stop-level price, however far from spot it was. When the hedge ratio is near zero, the short
+  PEP leg barely enters the z-score, so its stop-level price can sit far from spot: 4 trades had a
+  PEP strike of 1.36x to 1.45x spot (16 Sep 2011, 25 Nov 2011, 14 Mar 2012) or 0.37x spot
+  (15 Nov 2017).
+- **Why it was wrong:** a call struck that far from spot is not protection. Deep in the money
+  (0.37x) it is mostly a long stock position that cancels the short; far out of the money (1.4x)
+  it never pays. Either way it measures something other than "insuring the stop".
+- **The fix (`options.STRIKE_BAND = (0.80, 1.25)`, argument `strike_band`):** a leg whose stop-level
+  strike is outside 0.80x to 1.25x spot at entry is reported as "not protectable at the stop level"
+  and gets no call. The original rule is kept (`strike_band=None`) and chapter VII shows both side
+  by side as a sensitivity check; the answer box and the README use the sensible-strike rule and
+  say so. Tests: a strike outside the band gives no call; inside the band the result is identical.
+
+Before (original rule, every trade) / after (sensible-strike rule), default settings, data to
+2026-10-30; the unprotected column is unchanged:
+
+| | Unprotected | Before: every trade | After: sensible strikes |
+|---|---|---|---|
+| Total P&L | -$127.4k | -$282.9k | -$278.2k |
+| Sharpe ratio | -0.13 | -0.36 | -0.35 |
+| Maximum drawdown | -$315.3k | -$443.6k | -$439.0k |
+| Worst trade | -$88.6k | -$92.5k | -$92.5k |
+| Trades protected | | 109 | 108 |
+| Trades not protectable at the stop level | | 0 | 4 |
+| Protection net cost | | -$155.5k | -$150.8k |
+| Answer to "Do options save the pair?" | | No | No |
+
+The worst unprotected trade (14 Mar 2012, -$88.6k, both legs short with beta -0.05) never fired
+the model's rolling stop, but its KO leg went past the frozen stop-level price, so the KO call
+still cut the loss to -$45.4k; its PEP leg is the one now left unprotected. The protected version's
+worst trade is a different one (30 Mar 2020): -$10.1k unprotected, but calls bought when trailing
+volatility was 75% cost $82.4k net.
+
 ## Known effects (measured, not bugs)
 
 These are real features of the method. They are measured and reported, not corrected, because
@@ -223,7 +259,9 @@ a constant implied/realised ratio probably understates what past calls would hav
   positive; Watch if conviction is Medium; otherwise Avoid. Expected value = analogue win rate × P&L
   at target + (1 - win rate) × P&L at stop (it assumes every trade ends at one of the two; the
   analogues' actual average P&L is shown beside it).
-- Market exposure: each stock's beta to SPY from the past 252 daily returns; net dollar beta =
+- Market exposure: each stock's beta to SPY from the past 252 daily returns, with its 95% OLS
+  confidence interval and the 504-day (two-year) beta beside it; a note says the estimate is
+  unstable if a one-year interval includes zero or the two betas differ in sign. Net dollar beta =
   KO notional × KO beta + PEP notional × PEP beta; "close to market-neutral" if it is under 10% of
   the gross notional.
 - Liquidity: each leg as a share of its 20-day average volume; days to exit at 10% of that volume.
@@ -236,6 +274,9 @@ a constant implied/realised ratio probably understates what past calls would hav
 - Daily strategy return (net P&L / capital) regressed on SPY's daily return, full sample and test
   period, with Newey-West (HAC) standard errors and floor(4 (n/100)^(2/9)) lags; alpha annualised
   × 252 because returns do not compound.
-- Historical one-day VaR and expected shortfall at 95% and 99% over every day, including flat days.
+- Historical one-day VaR and expected shortfall at 95% and 99%, over every day and over in-market
+  days only (a position held at the close or at the previous close, `metrics.in_market_days`). The
+  strategy is flat most of the time and a flat day returns 0, so the all-days figures understate the
+  risk while a trade is on.
 - Monthly returns (sum of daily P&L / capital), rolling 252-day Sharpe, and a one-page PDF tear sheet
   built with fpdf2 (pure Python, so it works on Streamlit Cloud).

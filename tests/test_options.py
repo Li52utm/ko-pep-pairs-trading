@@ -265,13 +265,13 @@ def flat_terms(spread: float = 0.0, ratio: float = 1.2) -> dict[str, pd.DataFram
     return {"KO": pd.DataFrame([row]), "PEP": pd.DataFrame([row])}
 
 
-def short_ko_case(ko_path: np.ndarray, entry: int, exit_: int, shares: float = 1000.0):
+def short_ko_case(ko_path: np.ndarray, entry: int, exit_: int, shares: float = 1000.0, resid_std: float = 0.02):
     """Hand-built inputs: short `shares` KO from `entry` to `exit_`, PEP flat, beta 1, alpha 0."""
     n = len(ko_path)
     days = pd.bdate_range("2020-01-01", periods=n)
     prices = pd.DataFrame({"KO": ko_path, "PEP": 50.0, "usd_3m": 2.0}, index=days)
     # alpha, beta, resid_std chosen so the stop (z = +3.5) sits at KO = 50 * e^(3.5 * 0.02) = 53.6.
-    signals = pd.DataFrame({"alpha": 0.0, "beta": 1.0, "resid_std": 0.02}, index=days)
+    signals = pd.DataFrame({"alpha": 0.0, "beta": 1.0, "resid_std": resid_std}, index=days)
     held = (np.arange(n) >= entry) & (np.arange(n) < exit_)
     daily = pd.DataFrame({"shares_KO": np.where(held, -shares, 0.0), "shares_PEP": np.where(held, shares, 0.0)},
                          index=days)
@@ -334,3 +334,26 @@ def test_protection_answer_rules() -> None:
     assert op.protection_answer(totals(-50_000, -0.05, -90_000)) == "Partly"   # better Sharpe, still a loss
     assert op.protection_answer(totals(-150_000, -0.3, -50_000)) == "Partly"   # better worst trade only
     assert op.protection_answer(totals(-150_000, -0.3, -90_000)) == "No"
+
+
+def test_strike_outside_the_band_gives_no_call_and_inside_is_unchanged() -> None:
+    rng = np.random.default_rng(7)
+    ko = 50 * np.exp(np.cumsum(rng.normal(0, 0.01, 120)))
+    entry, exit_ = 80, 95
+    # Inside the band (strike about 1.07x spot): identical with and without the band.
+    case = short_ko_case(ko, entry, exit_)
+    plain = op.protected_backtest(*case, flat_terms(spread=0.1))
+    banded = op.protected_backtest(*case, flat_terms(spread=0.1), strike_band=op.STRIKE_BAND)
+    assert 0.8 <= plain["trades"].iloc[0]["strike"] / ko[entry] <= 1.25
+    pd.testing.assert_frame_equal(plain["daily"], banded["daily"])
+    assert banded["n_not_protectable"] == 0 and banded["trades"].iloc[0]["premium"] == pytest.approx(
+        plain["trades"].iloc[0]["premium"])
+    # Outside the band: resid_std 0.1 puts the stop at 50 e^0.35 = 70.95, about 1.4x spot.
+    far = short_ko_case(ko, entry, exit_, resid_std=0.1)
+    assert op.protected_backtest(*far, flat_terms())["trades"].iloc[0]["protected"]  # original rule buys it
+    result = op.protected_backtest(*far, flat_terms(), strike_band=op.STRIKE_BAND)
+    row = result["trades"].iloc[0]
+    assert row["not_protectable"] and not row["protected"] and row["excluded_legs"].startswith("KO 1.")
+    assert row["premium"] == 0 and row["protected_pnl"] == row["unprotected_pnl"]
+    assert result["n_not_protectable"] == 1 and (result["daily"]["option_pnl"] == 0).all()
+    assert not row["stop_reached"]  # KO never got near 70.95

@@ -469,6 +469,24 @@ def var_es(returns: pd.Series, levels: tuple[float, ...] = VAR_LEVELS) -> dict[f
     return out
 
 
+def in_market_days(position: pd.Series) -> pd.Series:
+    """True on days the strategy has market risk: a position is held at the close, or was held at the
+    previous close (the exit day still earns that position's P&L). Flat days on both counts are False."""
+    return (position != 0) | (position.shift(1, fill_value=0) != 0)
+
+
+def var_es_by_exposure(returns: pd.Series, position: pd.Series,
+                       levels: tuple[float, ...] = VAR_LEVELS) -> dict:
+    """var_es over every day and over in-market days only (in_market_days).
+
+    The strategy is flat most of the time, and a flat day returns 0, so the all-days figures
+    understate the risk while a trade is on; the in-market figures measure that risk directly.
+    """
+    mask = in_market_days(position.reindex(returns.index).fillna(0))
+    return {"all": var_es(returns, levels), "in_market": var_es(returns[mask], levels),
+            "days_in_market": int(mask.sum()), "share_in_market": float(mask.mean())}
+
+
 if __name__ == "__main__":
     from backtest import run_backtest
     from data import load_all_data

@@ -49,11 +49,14 @@ def count_tests() -> int:
 
 def protection_history(prices: pd.DataFrame, signals: pd.DataFrame, daily: pd.DataFrame,
                        trades: pd.DataFrame) -> dict:
-    """The historical protection model (options.protected_backtest), as in chapter VII."""
+    """The historical protection model (options.protected_backtest), as in chapter VII (sensible strikes)."""
     r = float(prices["usd_3m"].iloc[-1]) / 100
     terms = {t: op.snapshot_call_terms(op.load_snapshot(t)[0], prices[t], r) for t in ("KO", "PEP")}
-    result = op.protected_backtest(prices, signals, daily, trades, terms, capital=CAPITAL)
+    result = op.protected_backtest(prices, signals, daily, trades, terms, capital=CAPITAL, strike_band=op.STRIKE_BAND)
+    every = op.protected_backtest(prices, signals, daily, trades, terms, capital=CAPITAL)  # original rule
     return {"answer": op.protection_answer(result["totals"]), "totals": result["totals"],
+            "n_not_protectable": result["n_not_protectable"], "strike_band": op.STRIKE_BAND,
+            "every_total": every["totals"]["protected"]["total_pnl"],
             "share_paid": result["share_paid"], "protection_net": result["protection_net"],
             "n_trades": result["n_trades"], "n_open": result["n_open"],
             "first_year": int(pd.Timestamp(result["trades"]["entry_date"].min()).year)}

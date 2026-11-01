@@ -361,9 +361,55 @@ def market_neutrality_sentence(full: dict, test: dict, test_label: str) -> str:
 
 
 def var_sentence(risk: dict, capital: float) -> str:
-    """Historical VaR and expected shortfall in words (metrics.var_es, fractions of capital)."""
-    v95, v99 = risk[0.95], risk[0.99]
-    return (f"On 95% of days the strategy lost less than {v95['var']:.2%} of capital (${v95['var'] * capital / 1e3:,.1f}k "
-            f"per ${capital / 1e6:g}m); on the worst 5% of days it lost {v95['es']:.2%} on average. At 99% the figures "
-            f"are {v99['var']:.2%} and {v99['es']:.2%}. These are historical one-day measures over every day, "
-            "including days with no position.")
+    """Historical VaR and expected shortfall in words (metrics.var_es_by_exposure, fractions of capital)."""
+    a95, a99 = risk["all"][0.95], risk["all"][0.99]
+    m95, m99 = risk["in_market"][0.95], risk["in_market"][0.99]
+    larger = "larger" if m95["var"] > a95["var"] else "not larger"
+    return (f"Over every day, the 95% one-day VaR is {a95['var']:.2%} of capital and the expected shortfall "
+            f"{a95['es']:.2%} (99%: {a99['var']:.2%} and {a99['es']:.2%}). But the strategy has a position on only "
+            f"{risk['share_in_market']:.0%} of days, and a flat day returns nothing, so these all-days figures "
+            f"understate the risk while a trade is on. Counting only the {risk['days_in_market']:,} in-market days, the "
+            f"95% VaR is {m95['var']:.2%} (${m95['var'] * capital / 1e3:,.1f}k per ${capital / 1e6:g}m) and the "
+            f"expected shortfall {m95['es']:.2%}; at 99%, {m99['var']:.2%} and {m99['es']:.2%}. The in-market VaR is "
+            f"{larger} than the all-days figure.")
+
+
+def worst_trade_sentence(unprotected_worst: dict, protected_worst: dict, day: str, protected_day: str) -> str:
+    """Why protection did (not) help the worst trade (rows of options.protected_backtest's per-trade table).
+
+    day / protected_day: the two trades' entry dates, already formatted.
+    """
+    u = unprotected_worst
+    if not u["stop_reached"]:
+        first = (f"The worst unprotected trade, opened on {day}, lost {_k(abs(u['unprotected_pnl']))} without its short "
+                 "leg ever reaching the stop level: the loss came before the stop, so a call struck at the stop "
+                 "could not help.")
+    elif u["protected_pnl"] > u["unprotected_pnl"]:
+        result = (f"cut the loss to {_k(abs(u['protected_pnl']))}" if u["protected_pnl"] < 0
+                  else f"turned it into a gain of {_k(u['protected_pnl'])}")
+        first = (f"The worst unprotected trade, opened on {day}, lost {_k(abs(u['unprotected_pnl']))}; its short leg "
+                 f"went past the stop-level price, so the call {result}.")
+    else:
+        first = (f"The worst unprotected trade, opened on {day}, lost {_k(abs(u['unprotected_pnl']))}; its short leg reached "
+                 f"the stop-level price, but the calls cost more than they paid ({_k(u['protected_pnl'])} protected).")
+    p = protected_worst
+    if p["entry_date"] == u["entry_date"]:
+        return first
+    return first + (f" The protected version's worst trade is a different one: opened on {protected_day}, it "
+                    f"{made_or_lost(p['unprotected_pnl'])} {_k(abs(p['unprotected_pnl']))} unprotected, but its calls "
+                    f"{earned_or_cost(p['net_effect'])} {_k(abs(p['net_effect']))} net"
+                    + (f", bought when trailing volatility was {p['vol']:.0%}." if p.get("vol") == p.get("vol")
+                       and p['net_effect'] < 0 else "."))
+
+
+def strike_rule_sentence(n_not_protectable: int, band: tuple[float, float], band_total: float,
+                         every_total: float) -> str:
+    """Which protection rule the answer uses, and what the other rule gives (a sensitivity check)."""
+    low, high = band
+    if n_not_protectable == 0:
+        return (f"Every short leg's stop-level strike was within {low:.2f}x to {high:.2f}x spot at entry, so the "
+                "sensible-strike rule and the original rule agree.")
+    return (f"This uses the sensible-strike rule: a short leg whose stop-level strike is outside {low:.2f}x to "
+            f"{high:.2f}x spot at entry is not protectable at the stop level and gets no call, which affects "
+            f"{n_not_protectable} trade{'s' if n_not_protectable != 1 else ''}. With a call on every trade (the "
+            f"original rule) the protected total is {_k(every_total)} instead of {_k(band_total)}.")

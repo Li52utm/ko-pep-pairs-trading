@@ -99,7 +99,10 @@ def render_block(f: dict) -> str:
                                                     prot["protection_net"], prot["n_trades"], prot["first_year"],
                                                     prot.get("n_open", 0))
     b6 = (f"**Do options save the pair? {prot['answer']}.** Each stop-loss lost {_k(f['avg_slippage'])} more on "
-          f"average than a fill at the stop (worst {_k(f['worst_slippage'])}). " + " ".join(sentences))
+          f"average than a fill at the stop (worst {_k(f['worst_slippage'])}). " + " ".join(sentences)
+          + ((" " + wording.strike_rule_sentence(prot["n_not_protectable"], prot["strike_band"],
+                                                 prot["totals"]["protected"]["total_pnl"], prot["every_total"]))
+             if "strike_band" in prot else ""))
 
     return (
         "## Key findings\n\n"

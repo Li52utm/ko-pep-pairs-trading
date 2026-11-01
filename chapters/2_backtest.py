@@ -336,11 +336,17 @@ st.caption(f"Positive in {(rolling.dropna() > 0).mean():.0%} of the one-year win
            f"range {rolling.min():.2f} to {rolling.max():.2f}.")
 
 st.subheader("Value at risk")
-risk = metrics.var_es(returns)
-ui.kpi_row([(f"{label} at {level:.0%}", ui.fmt_pct(risk[level][key], 2), None,
-             ui.fmt_money(-risk[level][key] * capital))
-            for level in metrics.VAR_LEVELS for key, label in (("var", "VaR"), ("es", "Expected shortfall"))])
-st.markdown(ui.escape_dollars(wording.var_sentence(risk, capital)))
+risk_by_exposure = metrics.var_es_by_exposure(returns, daily["position"])
+risk = risk_by_exposure["all"]
+st.dataframe(pd.DataFrame([
+    {"Measure": f"{label} at {level:.0%}",
+     "Every day": f"{ui.fmt_pct(risk_by_exposure['all'][level][key], 2)} "
+                  f"({ui.fmt_money(-risk_by_exposure['all'][level][key] * capital)})",
+     "In-market days only": f"{ui.fmt_pct(risk_by_exposure['in_market'][level][key], 2)} "
+                            f"({ui.fmt_money(-risk_by_exposure['in_market'][level][key] * capital)})"}
+    for level in metrics.VAR_LEVELS for key, label in (("var", "VaR"), ("es", "Expected shortfall"))]),
+    hide_index=True, width="stretch")
+st.markdown(ui.escape_dollars(wording.var_sentence(risk_by_exposure, capital)))
 
 # One-page PDF tear sheet of what this page shows (src/tearsheet.py, pure Python).
 r = summary["returns"]
@@ -351,7 +357,8 @@ stats = [
     ("Max drawdown", ui.fmt_pct(r["max_drawdown_pct"])), ("Trades", f"{t['n_trades']}"),
     ("Win rate", ui.fmt_pct(t["win_rate"])), ("Beta to SPY", f"{full_fit['beta']:.3f}"),
     ("Alpha t-stat (NW)", f"{full_fit['alpha_t']:.2f}"),
-    ("95% one-day VaR", ui.fmt_pct(risk[0.95]["var"], 2)),
+    ("95% one-day VaR (all days)", ui.fmt_pct(risk[0.95]["var"], 2)),
+    ("95% one-day VaR (in market)", ui.fmt_pct(risk_by_exposure["in_market"][0.95]["var"], 2)),
 ]
 as_of = ui.data_as_of()
 pdf = tearsheet.build_tearsheet(

@@ -381,7 +381,9 @@ hand-built examples in `tests/test_validation.py`; thresholds are constants at t
   Avoid), b) three key points, c) the trade, d) risk/reward (`risk_reward`: P&L at target vs stop, the
   ratio, EV = win rate x target + (1 - win rate) x stop, and the analogues' actual average), e) scenario
   heatmap (`scenario_grid`, KO and PEP -6%..+6%, after costs), f) market exposure (`market_betas` over
-  the past 252 days, `market_exposure` net dollar beta and S&P +/-5% P&L, `exposure_note`; neutral if
+  the past 252 days with a 95% confidence interval, plus the two-year beta, `MARKET_WINDOW_LONG`;
+  `beta_stability_note` when a one-year interval includes zero or the betas differ in sign;
+  `market_exposure` net dollar beta and S&P +/-5% P&L, `exposure_note`; neutral if
   under `NEUTRAL_SHARE` = 10% of gross), g) catalysts (`results/catalysts.json` from the refresh,
   `catalysts_in_window`; missing dates show "not available", an unannounced ex-dividend date is
   projected from the option snapshot's dividend history), h) liquidity (`liquidity` vs the 20-day
@@ -398,7 +400,8 @@ hand-built examples in `tests/test_validation.py`; thresholds are constants at t
   settings it also shows market neutrality (`metrics.market_regression`: daily returns on SPY,
   Newey-West errors, full sample and test period; `wording.market_neutrality_sentence`), a monthly
   returns heatmap (`monthly_returns`), the rolling one-year Sharpe (`rolling_sharpe`), historical VaR
-  and expected shortfall at 95% / 99% (`var_es`), and a "Download tear sheet" PDF
+  and expected shortfall at 95% / 99% over every day and over in-market days only
+  (`var_es_by_exposure`, `in_market_days`; `wording.var_sentence`), and a "Download tear sheet" PDF
   (`src/tearsheet.py`, fpdf2, pure Python). Tests: `tests/test_risk.py`.
 - Every chapter opens, under the heading, with a "The question / The answer" box (`ui.answer_box`).
   Questions: `ui.QUESTIONS`. Chapters I-IV and VI call `ui.question_box(key)`, which builds the answer
@@ -434,6 +437,12 @@ hand-built examples in `tests/test_validation.py`; thresholds are constants at t
   `wording.protection_answer_sentences`, `edge_sentence`, `save_the_pair_sentences` (section ix, "What
   would actually save the pair?", from the research and Pair Hunt results). Wrapper:
   `ui.get_protection()`. The README block's options finding uses the same result.
+  Sensible-strike rule (corrected 2026-11-01, see the Corrections log): with
+  `strike_band=STRIKE_BAND = (0.80, 1.25)`, a leg whose stop-level strike / spot at entry is outside the
+  band is "not protectable at the stop level" and gets no call. `ui.get_protection()` returns that
+  version (used by the answer box and the README) and the original rule under `"every"`; chapter VII
+  shows both side by side. `wording.worst_trade_sentence` explains the worst trade (loss before the stop
+  level, or a call that paid), and `strike_rule_sentence` says which rule the answer uses.
 - Every sentence that states a verdict (made/lost, but/and, "no better than luck", "did not beat
   cash", "worth it") is built by a pure function in `src/wording.py`, so it follows the numbers;
   `tests/test_wording.py` flips each sign. Never type a conclusion or a parameter value into page

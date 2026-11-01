@@ -499,6 +499,11 @@ def short_leg_stop_price(state: dict, ticket: dict) -> float:
 # priced with Black-Scholes from data known on the day it is bought. These numbers are
 # a model estimate, not a record of tradable prices.
 PROTECTION_LIFE = 21        # trading days to expiry of each call; rolled at the same strike
+# A call struck far from spot is not protection: deep in the money it is mostly a long stock
+# position, far out of the money it never pays. With the sensible-strike rule, a leg whose
+# stop-level strike is outside STRIKE_BAND x spot at entry gets no call ("not protectable at the
+# stop level"). The original rule (strike_band=None) protects every trade; chapter VII shows both.
+STRIKE_BAND = (0.80, 1.25)  # strike / spot at entry
 VOL_WINDOW = 60             # trailing trading days for realised volatility
 YEAR_DAYS = 252             # trading days per year for volatility and option life
 
@@ -599,8 +604,13 @@ def _protect_leg(price: pd.Series, rates: pd.Series, i_entry: int, i_exit: int, 
 
 def protected_backtest(prices: pd.DataFrame, signals: pd.DataFrame, daily: pd.DataFrame, trades: pd.DataFrame,
                        call_terms: dict[str, pd.DataFrame], stop: float = 3.5, capital: float = 1_000_000,
-                       life: int = PROTECTION_LIFE, y_col: str = "KO", x_col: str = "PEP") -> dict:
+                       life: int = PROTECTION_LIFE, y_col: str = "KO", x_col: str = "PEP",
+                       strike_band: tuple[float, float] | None = None) -> dict:
     """Every backtest trade with and without a protective call on its short leg. A MODEL ESTIMATE.
+
+    strike_band: None (original rule: every short leg gets its call) or (low, high), e.g. STRIKE_BAND:
+    a leg whose strike / spot at entry is outside [low, high] is "not protectable at the stop level"
+    and gets no call. Each trade also records whether a short leg reached its stop-level price.
 
     For each trade, on its execution (entry) day e:
       - strike = the short leg's price at the stop z-score (leg_stop_strike), from the fair value
@@ -628,7 +638,8 @@ def protected_backtest(prices: pd.DataFrame, signals: pd.DataFrame, daily: pd.Da
         record = {"entry_date": trade["entry_date"], "exit_date": trade["exit_date"],
                   "direction": int(trade["direction"]), "exit_type": trade["exit_type"],
                   "unprotected_pnl": float(trade["net_pnl"]), "ticker": "", "strike": np.nan,
-                  "premium": 0.0, "first_premium": 0.0, "payoff": 0.0, "rolls": 0}
+                  "premium": 0.0, "first_premium": 0.0, "payoff": 0.0, "rolls": 0,
+                  "excluded_legs": "", "stop_reached": False}
         largest = 0.0
         # Normally one leg is short; with a negative beta both can be, and each gets its own call.
         for leg, column in ((y_col, "shares_KO"), (x_col, "shares_PEP")):
@@ -637,6 +648,13 @@ def protected_backtest(prices: pd.DataFrame, signals: pd.DataFrame, daily: pd.Da
                 continue
             strike = leg_stop_strike(leg, signals.iloc[i_entry], int(trade["direction"]), ko, pep, stop, y_col)
             if not np.isfinite(strike):
+                continue
+            path = prices[leg].iloc[i_entry + 1:i_exit + 1]
+            record["stop_reached"] |= bool(len(path) and path.max() >= strike)
+            moneyness = strike / float(prices[leg].iloc[i_entry])
+            if strike_band is not None and not strike_band[0] <= moneyness <= strike_band[1]:
+                note = f"{leg} {moneyness:.2f}x spot"
+                record["excluded_legs"] = f"{record['excluded_legs']}; {note}" if record["excluded_legs"] else note
                 continue
             pnl, leg_record = _protect_leg(prices[leg], prices["usd_3m"], i_entry, i_exit, -shares, strike,
                                            call_terms[leg], life)
@@ -652,6 +670,8 @@ def protected_backtest(prices: pd.DataFrame, signals: pd.DataFrame, daily: pd.Da
             record["first_premium"] += leg_record["first_premium"]
             record["payoff"] += leg_record["payoff"]
             record["rolls"] += leg_record["rolls"]
+        record["protected"] = bool(record["ticker"])
+        record["not_protectable"] = bool(record["excluded_legs"])
         record["net_effect"] = record["payoff"] - record["premium"]
         record["protected_pnl"] = record["unprotected_pnl"] + record["net_effect"]
         rows.append(record)
@@ -671,6 +691,9 @@ def protected_backtest(prices: pd.DataFrame, signals: pd.DataFrame, daily: pd.Da
         "total_payoff": float(per_trade["payoff"].sum()),
         "protection_net": float(per_trade["net_effect"].sum()),
         "share_paid": float((per_trade["net_effect"] > 0).mean()) if len(per_trade) else float("nan"),
+        "n_protected": int(per_trade["protected"].sum()) if len(per_trade) else 0,
+        "n_not_protectable": int(per_trade["not_protectable"].sum()) if len(per_trade) else 0,
+        "strike_band": strike_band,
         "n_trades": len(per_trade),
         "n_open": int(per_trade["exit_date"].isna().sum()) if len(per_trade) else 0,
     }

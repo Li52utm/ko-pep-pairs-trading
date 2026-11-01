@@ -313,6 +313,8 @@ RECOMMEND, WATCH, AVOID = "Recommend", "Watch", "Avoid"
 CLIENT_ANSWER = {RECOMMEND: "Yes", WATCH: "Not yet", AVOID: "No"}
 SCENARIO_MOVES = tuple(m / 100 for m in range(-6, 7))  # -6% .. +6% in 1% steps, both legs
 MARKET_WINDOW = 252          # trading days of daily returns for each stock's beta to SPY
+MARKET_WINDOW_LONG = 504     # the two-year beta shown beside it, to check stability
+BETA_CONFIDENCE = 0.95       # confidence level of the beta interval
 MARKET_MOVE = 0.05           # S&P 500 move for the exposure P&L (+/- 5%)
 NEUTRAL_SHARE = 0.10         # |net dollar beta| below 10% of gross notional: close to market-neutral
 ADV_WINDOW = 20              # trading days for the average daily volume
@@ -400,12 +402,46 @@ def market_betas(prices: pd.DataFrame, window: int = MARKET_WINDOW, market: str 
                  tickers: tuple[str, ...] = ("KO", "PEP")) -> dict:
     """Each stock's beta to the market from the last `window` daily returns (past data only).
 
-    beta = cov(r_stock, r_market) / var(r_market), simple daily returns, ddof = 1.
+    beta = cov(r_stock, r_market) / var(r_market), simple daily returns, ddof = 1 (the OLS slope).
+    "ci" holds each beta's BETA_CONFIDENCE interval from the OLS standard error,
+    beta +/- t(n - 2) x sqrt(residual variance / sum((r_market - mean)^2)).
     """
+    from scipy.stats import t as student_t  # only needed here
+
     returns = prices[[*tickers, market]].pct_change().dropna().iloc[-window:]
-    var = returns[market].var(ddof=1)
-    out = {t: float(returns[t].cov(returns[market]) / var) for t in tickers}
-    return {"betas": out, "start": returns.index[0], "end": returns.index[-1], "days": len(returns)}
+    x = returns[market]
+    var = x.var(ddof=1)
+    n = len(returns)
+    critical = float(student_t.ppf(0.5 + BETA_CONFIDENCE / 2, n - 2))
+    out, ci = {}, {}
+    for ticker in tickers:
+        beta = float(returns[ticker].cov(x) / var)
+        alpha = returns[ticker].mean() - beta * x.mean()
+        residuals = returns[ticker] - alpha - beta * x
+        se = float(np.sqrt((residuals ** 2).sum() / (n - 2) / ((x - x.mean()) ** 2).sum()))
+        out[ticker] = beta
+        ci[ticker] = (beta - critical * se, beta + critical * se)
+    return {"betas": out, "ci": ci, "start": returns.index[0], "end": returns.index[-1], "days": n}
+
+
+def beta_stability_note(one_year: dict, two_year: dict) -> str | None:
+    """A note when the market-exposure estimate is unstable, else None.
+
+    Unstable: a one-year confidence interval includes zero, or the one-year and two-year betas
+    of a stock differ in sign.
+    """
+    problems = []
+    for ticker, (low, high) in one_year["ci"].items():
+        if low <= 0 <= high:
+            problems.append(f"{ticker}'s one-year interval ({low:.2f} to {high:.2f}) includes zero")
+        b1, b2 = one_year["betas"][ticker], two_year["betas"][ticker]
+        if np.sign(b1) != np.sign(b2):
+            problems.append(f"{ticker}'s one-year and two-year betas differ in sign ({b1:.2f} vs {b2:.2f})")
+    if not problems:
+        return None
+    joined = problems[0] if len(problems) == 1 else ", ".join(problems[:-1]) + " and " + problems[-1]
+    return (f"The market exposure estimate is unstable: {joined}. Treat the net dollar beta and the S&P "
+            "scenarios as rough, not as a hedge ratio.")
 
 
 def market_exposure(ticket: dict, state: dict, betas: dict[str, float], move: float = MARKET_MOVE) -> dict:

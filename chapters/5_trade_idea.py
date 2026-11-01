@@ -114,6 +114,7 @@ rr = ti.risk_reward(ticket, analogues)
 rec, rec_reason = ti.recommendation(level, rr)
 client_answer, client_sentence = ti.client_line(rec, rec_reason, rr)
 betas = ti.market_betas(prices)
+betas_long = ti.market_betas(prices, window=ti.MARKET_WINDOW_LONG)
 exposure = ti.market_exposure(ticket, state, betas["betas"])
 liquidity = ti.liquidity(ticket, ui.load_volumes())
 holding = (analogues["avg_holding_days"] if analogues["count"]
@@ -287,16 +288,27 @@ note_md.append("P&L grid after costs (rows: KO move, columns: PEP move):\n\n" + 
 # --------------------------------------------------------------------------- #
 section("v", "Market exposure")
 b = betas["betas"]
+level_pct = f"{ti.BETA_CONFIDENCE:.0%}"
+
+
+def beta_detail(ticker: str) -> str:
+    low, high = betas["ci"][ticker]
+    return f"{level_pct} interval {low:.2f} to {high:.2f}; two-year {betas_long['betas'][ticker]:.2f}"
+
+
 kpis([
-    ("KO beta to SPY", f"{b['KO']:.2f}", None, f"{betas['days']} days to {day(betas['end'])}"),
-    ("PEP beta to SPY", f"{b['PEP']:.2f}", None, f"{betas['days']} days to {day(betas['end'])}"),
+    ("KO beta to SPY (one year)", f"{b['KO']:.2f}", None, beta_detail("KO")),
+    ("PEP beta to SPY (one year)", f"{b['PEP']:.2f}", None, beta_detail("PEP")),
     ("Net dollar beta", money(exposure["net_dollar_beta"]), None,
      f"{exposure['share_of_gross']:.0%} of {money(exposure['gross'])} gross"),
     (f"S&P 500 +{exposure['move']:.0%}", money(exposure["pnl_up"]), None, "spread unchanged"),
     (f"S&P 500 −{exposure['move']:.0%}", money(exposure["pnl_down"]), None, "spread unchanged"),
 ])
-say(ti.exposure_note(exposure) + f" Betas use the past {betas['days']} daily returns only; net dollar beta = "
-    "KO notional × KO beta + PEP notional × PEP beta.")
+say(ti.exposure_note(exposure) + f" Betas use the past {betas['days']} daily returns only (two-year: "
+    f"{betas_long['days']}); net dollar beta = KO notional × KO beta + PEP notional × PEP beta.")
+unstable = ti.beta_stability_note(betas, betas_long)
+if unstable:
+    say(unstable)
 
 # --------------------------------------------------------------------------- #
 # g) Catalysts

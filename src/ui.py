@@ -305,6 +305,8 @@ PROTECTION_TICKERS = ("KO", "PEP")  # either can be the short leg
 def get_protection() -> dict:
     """options.protected_backtest on the default backtest, priced from today's option snapshots.
 
+    Top-level keys: the sensible-strike rule (options.STRIKE_BAND); "every": the original rule.
+
     Returns {"ok": False, "reason": ...} if a snapshot is missing or has no call with a usable
     bid/ask (the implied/realised ratio and the spread come from those calls).
     """
@@ -319,14 +321,18 @@ def get_protection() -> dict:
         if ticker_terms.empty:
             return {"ok": False, "reason": f"the {ticker} option snapshot has no call with a usable bid and ask"}
         terms[ticker] = ticker_terms
-    return {"ok": True, "terms": terms, **_run_protection(terms)}
+    # The answer uses the sensible-strike rule; the original rule (every trade) is kept beside it
+    # as a sensitivity check under "every".
+    return {"ok": True, "terms": terms, **_run_protection(terms, options.STRIKE_BAND),
+            "every": _run_protection(terms, None)}
 
 
 @st.cache_data(show_spinner="Pricing protection for every trade ...")
-def _run_protection(terms: dict[str, pd.DataFrame]) -> dict:
+def _run_protection(terms: dict[str, pd.DataFrame], strike_band: tuple[float, float] | None) -> dict:
     daily, trades = get_backtest()
     return options.protected_backtest(get_data(), get_signals(), daily, trades, terms,
-                                      stop=SIGNAL_DEFAULTS["stop"], capital=DEFAULT_CAPITAL)
+                                      stop=SIGNAL_DEFAULTS["stop"], capital=DEFAULT_CAPITAL,
+                                      strike_band=strike_band)
 
 
 # --------------------------------------------------------------------------- #
