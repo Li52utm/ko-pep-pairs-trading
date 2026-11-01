@@ -304,3 +304,174 @@ def conviction(
     score = 1 + sum(r["change"] for r in reasons)  # 1 = Medium
     level = LEVELS[min(max(score, 0), len(LEVELS) - 1)]
     return level, reasons
+
+
+# --------------------------------------------------------------------------- #
+# f) Desk-note upgrade: recommendation, risk/reward, scenarios, exposure, liquidity, catalysts
+# --------------------------------------------------------------------------- #
+RECOMMEND, WATCH, AVOID = "Recommend", "Watch", "Avoid"
+CLIENT_ANSWER = {RECOMMEND: "Yes", WATCH: "Not yet", AVOID: "No"}
+SCENARIO_MOVES = tuple(m / 100 for m in range(-6, 7))  # -6% .. +6% in 1% steps, both legs
+MARKET_WINDOW = 252          # trading days of daily returns for each stock's beta to SPY
+MARKET_MOVE = 0.05           # S&P 500 move for the exposure P&L (+/- 5%)
+NEUTRAL_SHARE = 0.10         # |net dollar beta| below 10% of gross notional: close to market-neutral
+ADV_WINDOW = 20              # trading days for the average daily volume
+PARTICIPATION = 0.10         # trade at most 10% of the average daily volume per day
+
+
+def risk_reward(ticket: dict, analogues: dict) -> dict:
+    """P&L at target vs stop, their ratio, and two views of the expected value.
+
+    expected_value = win rate of the analogues x P&L at target + (1 - win rate) x P&L at stop,
+    a model view that assumes every trade ends at its target or its stop. The analogues'
+    actual average net P&L is reported beside it, because real exits fall in between.
+    """
+    target, stop = ticket["pnl_target"], ticket["pnl_stop"]
+    win = analogues["win_rate"]
+    return {
+        "pnl_target": target, "pnl_stop": stop,
+        "ratio": target / -stop if stop < 0 else float("nan"),
+        "win_rate": win, "n_analogues": analogues["count"],
+        "expected_value": win * target + (1 - win) * stop if win == win else float("nan"),
+        "analogue_avg_pnl": analogues["avg_net_pnl"],
+    }
+
+
+def recommendation(level: str, rr: dict) -> tuple[str, str]:
+    """'Recommend', 'Watch' or 'Avoid', and one sentence why.
+
+    Recommend: conviction High AND a positive expected value from the analogues (risk_reward).
+    Watch:     conviction Medium.
+    Avoid:     everything else (Low, High without a positive expected value, or no trade).
+    """
+    ev = rr["expected_value"]
+    ev_text = (f"an expected value of {_money(ev)} per trade from the analogues' {rr['win_rate']:.0%} win rate"
+               if ev == ev else "no analogues to estimate an expected value")
+    if level == "High" and ev == ev and ev > 0:
+        return RECOMMEND, f"Conviction is high and the setup has {ev_text}."
+    if level == "Medium":
+        return WATCH, (f"Conviction is only medium, with {ev_text}: wait for a stronger signal before "
+                       "committing risk.")
+    if level == NO_TRADE:
+        return AVOID, "There is no trade to put on: the z-score is inside the entry level."
+    if level == "High":
+        return AVOID, f"Conviction is high, but the setup has {ev_text}, so the odds do not pay for the risk."
+    return AVOID, f"Conviction is low, with {ev_text}."
+
+
+def client_line(rec: str, reason: str, rr: dict) -> tuple[str, str]:
+    """The final boxed line: 'Yes', 'No' or 'Not yet', and one sentence."""
+    answer = CLIENT_ANSWER[rec]
+    if answer == "Yes":
+        sentence = (f"The risk/reward is {rr['ratio']:.1f} to 1 with a positive expected value, and the rules "
+                    "behind the call are written down and tested.")
+    elif answer == "Not yet":
+        sentence = f"{reason} I would show it as a watch-list idea, not a trade."
+    else:
+        sentence = f"{reason} I would not put a client's money behind it."
+    return answer, sentence
+
+
+def scenario_grid(ticket: dict, state: dict, cost_bps: float = 5.0,
+                  moves: tuple[float, ...] = SCENARIO_MOVES) -> pd.DataFrame:
+    """P&L of the ticket if KO moves by each row's % and PEP by each column's %, after costs.
+
+    P&L = shares_KO x KO x ko_move + shares_PEP x PEP x pep_move - entry cost - exit cost at the
+    new prices (cost_bps per leg per side, as in the backtest).
+    """
+    ko, pep = state["ko"], state["pep"]
+    sk, sp = ticket["shares_ko"], ticket["shares_pep"]
+    rate = cost_bps / 10_000
+    entry_cost = rate * gross_notional(sk, sp, ko, pep)
+    grid = {}
+    for pep_move in moves:
+        column = {}
+        for ko_move in moves:
+            new_ko, new_pep = ko * (1 + ko_move), pep * (1 + pep_move)
+            pnl = sk * (new_ko - ko) + sp * (new_pep - pep)
+            column[ko_move] = pnl - entry_cost - rate * gross_notional(sk, sp, new_ko, new_pep)
+        grid[pep_move] = column
+    frame = pd.DataFrame(grid)
+    frame.index.name, frame.columns.name = "ko_move", "pep_move"
+    return frame
+
+
+def market_betas(prices: pd.DataFrame, window: int = MARKET_WINDOW, market: str = "SPY",
+                 tickers: tuple[str, ...] = ("KO", "PEP")) -> dict:
+    """Each stock's beta to the market from the last `window` daily returns (past data only).
+
+    beta = cov(r_stock, r_market) / var(r_market), simple daily returns, ddof = 1.
+    """
+    returns = prices[[*tickers, market]].pct_change().dropna().iloc[-window:]
+    var = returns[market].var(ddof=1)
+    out = {t: float(returns[t].cov(returns[market]) / var) for t in tickers}
+    return {"betas": out, "start": returns.index[0], "end": returns.index[-1], "days": len(returns)}
+
+
+def market_exposure(ticket: dict, state: dict, betas: dict[str, float], move: float = MARKET_MOVE) -> dict:
+    """Net dollar beta of the position and its P&L if the S&P 500 moves +/- `move`."""
+    notional = {"KO": ticket["shares_ko"] * state["ko"], "PEP": ticket["shares_pep"] * state["pep"]}
+    dollar_beta = {t: notional[t] * betas[t] for t in notional}
+    net = sum(dollar_beta.values())
+    gross = sum(abs(v) for v in notional.values())
+    share = abs(net) / gross if gross else float("nan")
+    return {"notional": notional, "dollar_beta": dollar_beta, "net_dollar_beta": net, "gross": gross,
+            "share_of_gross": share, "pnl_up": net * move, "pnl_down": -net * move, "move": move,
+            "neutral": bool(share < NEUTRAL_SHARE)}
+
+
+def exposure_note(exposure: dict) -> str:
+    """Whether the position is market-neutral, from the net dollar beta."""
+    net, share = exposure["net_dollar_beta"], exposure["share_of_gross"]
+    direction = "long" if net > 0 else "short"
+    if exposure["neutral"]:
+        return (f"Close to market-neutral: the net dollar beta of {_money(net)} is {share:.0%} of the gross "
+                f"position (below {NEUTRAL_SHARE:.0%}), so a {exposure['move']:.0%} market move changes the P&L by "
+                f"about {_money(abs(exposure['pnl_up']))}.")
+    return (f"Not market-neutral: the position is net {direction} the market by {_money(abs(net))} of dollar "
+            f"beta, {share:.0%} of the gross position, so a {exposure['move']:.0%} market move changes the P&L "
+            f"by about {_money(abs(exposure['pnl_up']))} before the spread moves at all.")
+
+
+def liquidity(ticket: dict, volumes: pd.DataFrame | None, window: int = ADV_WINDOW,
+              participation: float = PARTICIPATION) -> dict | None:
+    """Each leg as % of its average daily volume, and days to exit at `participation` of ADV."""
+    if volumes is None or volumes.empty:
+        return None
+    out = {}
+    for ticker, shares in (("KO", ticket["shares_ko"]), ("PEP", ticket["shares_pep"])):
+        adv = float(volumes[ticker].dropna().iloc[-window:].mean())
+        out[ticker] = {"shares": abs(shares), "adv": adv, "share_of_adv": abs(shares) / adv,
+                       "days_to_exit": abs(shares) / (participation * adv)}
+    return out
+
+
+def holding_window_end(as_of: pd.Timestamp, holding_days: float) -> pd.Timestamp:
+    """The expected exit date: `holding_days` trading (business) days after `as_of`."""
+    return pd.Timestamp(as_of) + pd.offsets.BDay(max(int(round(holding_days)), 1))
+
+
+def catalysts_in_window(catalysts: dict | None, as_of: pd.Timestamp, holding_days: float) -> list[dict]:
+    """Next earnings and ex-dividend dates per ticker, flagged if inside the expected holding period.
+
+    catalysts: results/catalysts.json ({"KO": {"earnings": "YYYY-MM-DD" or None, "ex_dividend": ...}, ...}).
+    If Yahoo has not announced the next ex-dividend date, "ex_dividend_projected" (an estimate
+    from the dividend history) is used and labelled as projected. A missing file or date gives
+    a row with date None ("not available"), never an error.
+    """
+    end = holding_window_end(as_of, holding_days)
+    rows = []
+    for ticker in ("KO", "PEP"):
+        info = (catalysts or {}).get(ticker) or {}
+        for key, label in (("earnings", "Earnings"), ("ex_dividend", "Ex-dividend")):
+            raw = info.get(key)
+            if not raw and key == "ex_dividend" and info.get("ex_dividend_projected"):
+                raw, label = info["ex_dividend_projected"], "Ex-dividend (projected)"
+            date = pd.Timestamp(raw) if raw else None
+            rows.append({"ticker": ticker, "event": label, "date": date,
+                         "inside": bool(date is not None and pd.Timestamp(as_of) < date <= end)})
+    return rows
+
+
+def _money(x: float) -> str:
+    return f"{'-' if x < 0 else ''}${abs(x) / 1e3:,.1f}k"

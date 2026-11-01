@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pipeline import DataCheckError, check_option_chain, check_prices, check_universe
+from pipeline import DataCheckError, check_option_chain, check_prices, check_universe, check_volumes
 
 
 def prices(n: int = 5, end: str = "2026-10-30") -> pd.DataFrame:
@@ -68,3 +68,12 @@ def test_option_chain_checks() -> None:
         check_option_chain("KO", chain([]))
     with pytest.raises(DataCheckError, match="calls and puts"):
         check_option_chain("KO", pd.DataFrame({"type": ["call"], "strike": [94.0], "bid": [0.5]}))
+
+
+def test_volume_checks() -> None:
+    good = pd.DataFrame({"KO": [1e6, 2e6], "PEP": [5e5, 6e5]}, index=pd.bdate_range("2026-10-29", periods=2))
+    check_volumes(good)
+    with pytest.raises(DataCheckError, match="empty"):
+        check_volumes(good.iloc[:0])
+    with pytest.raises(DataCheckError, match="no positive volume"):
+        check_volumes(good.assign(PEP=[5e5, 0.0]))

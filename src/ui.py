@@ -755,6 +755,41 @@ def _read_validation(stamp: float) -> dict:
     return json.loads(VALIDATION_PATH.read_text(encoding="utf-8"))
 
 
+CATALYSTS_PATH = RESULTS_DIR / "catalysts.json"
+VOLUME_PATH = RESULTS_DIR / "volume_snapshot.csv"
+
+
+def load_catalysts() -> dict | None:
+    """results/catalysts.json (next earnings and ex-dividend dates), or None if missing."""
+    if not CATALYSTS_PATH.exists():
+        return None
+    return _read_json(str(CATALYSTS_PATH), CATALYSTS_PATH.stat().st_mtime)
+
+
+def load_volumes() -> pd.DataFrame | None:
+    """results/volume_snapshot.csv (KO and PEP daily share volumes), or None if missing."""
+    if not VOLUME_PATH.exists():
+        return None
+    return _read_csv(str(VOLUME_PATH), VOLUME_PATH.stat().st_mtime)
+
+
+@st.cache_data(show_spinner=False)
+def _read_json(path: str, stamp: float) -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+@st.cache_data(show_spinner=False)
+def _read_csv(path: str, stamp: float) -> pd.DataFrame:
+    return pd.read_csv(path, index_col=0, parse_dates=True)
+
+
+def verdict_box(label: str, verdict: str, sentence: str) -> None:
+    """A boxed one-line verdict, e.g. "Recommendation: Watch." plus its generated reason."""
+    with st.container(key=_key("answer", label, verdict)):
+        separator = "" if label.endswith("?") else ":"  # "Would I ...? No." needs no colon
+        st.markdown(escape_dollars(f"**{label}{separator} {verdict}.** {sentence}"))
+
+
 def footer(lead: str = "Educational project. Not investment advice.") -> None:
     st.divider()
     st.caption(

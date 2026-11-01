@@ -1,0 +1,12 @@
+{
+ "fetched_at": "2026-11-01 12:02:51+00:00",
+ "source": "Yahoo Finance",
+ "KO": {
+  "earnings": "2027-02-09",
+  "ex_dividend": "2026-12-01"
+ },
+ "PEP": {
+  "earnings": "2027-02-02",
+  "ex_dividend": null
+ }
+}

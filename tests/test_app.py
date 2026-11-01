@@ -103,3 +103,21 @@ def test_saving_the_pair_answers_its_question(offline_app) -> None:
     assert "**The question:** Do options save the pair?" in text
     answer = options.protection_answer(ui.get_protection()["totals"])
     assert f"**The answer: {answer}.**" in text and "Model estimate" in text
+
+
+def test_trade_idea_is_a_complete_desk_note(offline_app) -> None:
+    at = offline_app("chapters/5_trade_idea.py")
+    assert not at.exception, [e.value for e in at.exception]
+    text = markdown_text(at)
+    assert any(f"**Recommendation: {r}.**" in text for r in ("Recommend", "Watch", "Avoid"))
+    assert any(f"**Would I recommend this trade to a client? {a}.**" in text for a in ("Yes", "No", "Not yet"))
+    assert "Illustrative only. Not investment advice." in text and "net dollar beta" in text
+
+
+def test_trade_idea_without_catalysts_or_volumes(offline_app, monkeypatch) -> None:
+    monkeypatch.setattr(ui, "load_catalysts", lambda: None)
+    monkeypatch.setattr(ui, "load_volumes", lambda: None)
+    at = offline_app("chapters/5_trade_idea.py")
+    assert not at.exception, [e.value for e in at.exception]
+    text = markdown_text(at)
+    assert "Volume data is not available" in text and "no dates are available" in text

@@ -64,3 +64,14 @@ def check_option_chain(ticker: str, chain: pd.DataFrame) -> None:
         raise DataCheckError(f"{ticker} options: need both calls and puts, got {sorted(set(chain['type']))}")
     if not (chain["bid"].fillna(0) > 0).any():
         raise DataCheckError(f"{ticker} options: every bid is zero")
+
+
+def check_volumes(volumes: pd.DataFrame, tickers: tuple[str, ...] = ("KO", "PEP")) -> None:
+    """Daily share volumes for the liquidity section: present, positive on the last day."""
+    if volumes is None or volumes.empty:
+        raise DataCheckError("volumes: the download is empty")
+    missing = [t for t in tickers if t not in volumes.columns]
+    if missing:
+        raise DataCheckError(f"volumes: missing tickers {missing}")
+    if not (volumes[list(tickers)].iloc[-1] > 0).all():
+        raise DataCheckError("volumes: no positive volume on the last day")

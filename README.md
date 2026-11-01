@@ -29,7 +29,7 @@ All numbers are from data to **30 October 2026** (daily closes from 4 January 20
 - **Cheap Swiss franc funding hid a large tail risk.** Funding the trade with a franc loan earned CHF 17.9k of carry over the whole period; the Swiss National Bank's removal of the EUR/CHF floor cost CHF 165.1k on a single day in January 2015, about 11 years of the average interest income.
 - **Do options save the pair? No.** Each stop-loss lost $6.1k more on average than a fill at the stop (worst $47.0k). Across all 115 trades since 2010 (1 still open), buying a call on the short leg at its stop level lowers the total from -$127.4k to -$282.9k and moves the Sharpe ratio from -0.13 to -0.36 (a model estimate). The calls paid off on only 26% of trades and cost $155.5k net in total, so the protected version is worse on the total, the Sharpe ratio and the worst trade.
 
-Automated tests: **154** (pytest, offline), run on every push and before every data refresh is committed.
+Automated tests: **165** (pytest, offline), run on every push and before every data refresh is committed.
 <!-- AUTO:END -->
 
 ## The seven chapters

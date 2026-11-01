@@ -15,12 +15,14 @@ Steps:
     3. Validate the downloads against independent sources (scripts/validate_data.py,
        src/validation.py). Any FAIL stops the refresh here, again before anything is written.
     4. Write results/data_snapshot.csv, results/universe_snapshot.csv, the option
-       snapshots, results/data_validation.json and docs/DATA_VALIDATION.md, then re-run src/research.py and src/pair_hunt.py (which read the new
+       snapshots, results/volume_snapshot.csv, results/catalysts.json,
+       results/data_validation.json and docs/DATA_VALIDATION.md, then re-run src/research.py and src/pair_hunt.py (which read the new
        snapshots) and regenerate the README auto-block (scripts/update_readme.py).
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -41,6 +43,37 @@ import validate_data  # noqa: E402
 import validation  # noqa: E402
 
 OPTION_TICKERS = ("KO", "PEP")  # either can be the short leg of today's trade
+CATALYSTS_PATH = ROOT / "results" / "catalysts.json"
+VOLUME_PATH = ROOT / "results" / "volume_snapshot.csv"
+VOLUME_DAYS = 90  # calendar days of daily volume kept for the 20-day average
+
+
+def fetch_catalysts(as_of: pd.Timestamp) -> dict:
+    """Next earnings and ex-dividend dates for KO and PEP from Yahoo. Never raises.
+
+    A date that cannot be fetched, or is not after `as_of`, is stored as None and the
+    Trade Idea shows "not available" (or a projected ex-dividend date, labelled as such).
+    """
+    import yfinance as yf
+
+    out: dict = {"fetched_at": str(pd.Timestamp.now(tz="UTC").floor("s")), "source": "Yahoo Finance"}
+    for ticker in OPTION_TICKERS:
+        info: dict = {"earnings": None, "ex_dividend": None}
+        try:
+            dates = yf.Ticker(ticker).get_earnings_dates(limit=8).index
+            days = pd.DatetimeIndex(dates).tz_localize(None).normalize()
+            future = days[days > as_of]
+            info["earnings"] = str(future.min().date()) if len(future) else None
+        except Exception as error:
+            print(f"   {ticker} earnings date not available ({type(error).__name__})")
+        try:
+            ex = yf.Ticker(ticker).calendar.get("Ex-Dividend Date")
+            if ex is not None and pd.Timestamp(ex) > as_of:
+                info["ex_dividend"] = str(pd.Timestamp(ex).date())
+        except Exception as error:
+            print(f"   {ticker} ex-dividend date not available ({type(error).__name__})")
+        out[ticker] = info
+    return out
 
 
 def previous(path: Path) -> pd.DataFrame | None:
@@ -61,6 +94,14 @@ def download_everything() -> dict:
         pipeline.check_universe(uni, previous(universe.SNAPSHOT_PATH), universe.universe_tickers())
         print(f"   {uni.shape[1]} tickers, {len(uni)} rows to {uni.index[-1].date()}")
 
+        print("Downloading KO and PEP daily volumes ...")
+        end = prices.index[-1]
+        volumes = data._yf_column(list(OPTION_TICKERS), "Volume", end - pd.Timedelta(days=VOLUME_DAYS), end)
+        pipeline.check_volumes(volumes)
+
+    print("Fetching earnings and ex-dividend dates (falls back to 'not available') ...")
+    catalysts = fetch_catalysts(prices.index[-1])
+
     chains = {}
     for ticker in OPTION_TICKERS:
         print(f"Downloading the {ticker} option chain ...")
@@ -68,7 +109,7 @@ def download_everything() -> dict:
         pipeline.check_option_chain(ticker, chain)
         chains[ticker] = (chain, dividends)
         print(f"   {len(chain)} quotes, expiry {chain['expiry'].iloc[0]}")
-    return {"prices": prices, "universe": uni, "chains": chains}
+    return {"prices": prices, "universe": uni, "chains": chains, "volumes": volumes, "catalysts": catalysts}
 
 
 class ValidationFailed(RuntimeError):
@@ -91,6 +132,8 @@ def write_snapshots(downloads: dict) -> None:
     downloads["universe"].to_csv(universe.SNAPSHOT_PATH)
     for ticker, (chain, dividends) in downloads["chains"].items():
         options.save_snapshot(ticker, chain, dividends)
+    downloads["volumes"].to_csv(VOLUME_PATH)
+    CATALYSTS_PATH.write_text(json.dumps(downloads["catalysts"], indent=1), encoding="utf-8")
     print(f"Snapshots written: {data.SNAPSHOT_PATH.name}, {universe.SNAPSHOT_PATH.name}, "
           f"options for {', '.join(downloads['chains'])}")
 
