@@ -94,3 +94,12 @@ def test_backtest_shows_the_data_quality_table(offline_app) -> None:
     titles = [r["title"] for r in ui.load_validation()["checks"]]
     shown = [table.value for table in at.dataframe if "Check" in table.value.columns]
     assert shown and shown[0]["Check"].tolist() == titles
+
+
+def test_saving_the_pair_answers_its_question(offline_app) -> None:
+    at = offline_app("chapters/7_saving_the_pair.py")
+    assert not at.exception, [e.value for e in at.exception]
+    text = markdown_text(at)
+    assert "**The question:** Do options save the pair?" in text
+    answer = options.protection_answer(ui.get_protection()["totals"])
+    assert f"**The answer: {answer}.**" in text and "Model estimate" in text

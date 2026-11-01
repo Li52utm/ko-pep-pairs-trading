@@ -1,4 +1,4 @@
-"""VII. Saving the Pair: can listed options do what the stop-loss couldn't?
+"""VII. Saving the Pair: do options save the pair?
 
 Reads the option snapshot saved by src/options.py (results/options_snapshot_<T>.csv);
 the scheduled refresh (scripts/refresh_snapshots.py) replaces it. Every number comes from
@@ -59,9 +59,73 @@ ui.chapter_heading(**ui.CHAPTERS["saving_the_pair"])
 
 
 # --------------------------------------------------------------------------- #
-# i. Why the stop-loss wasn't enough
+# The answer, from the historical protection model (options.protected_backtest)
 # --------------------------------------------------------------------------- #
-ui.section_heading("i", "Why the stop-loss wasn't enough")
+QUESTION = "Do options save the pair?"
+protection = ui.get_protection()
+if not protection["ok"]:
+    ui.answer_box(QUESTION, "Not available yet",
+                  f"The historical estimate is priced from today's option snapshots, and {protection['reason']}. "
+                  f"{NO_SNAPSHOT_HELP}")
+else:
+    totals = protection["totals"]
+    before, after = totals["unprotected"], totals["protected"]
+    answer = op.protection_answer(totals)
+    first_year = int(pd.Timestamp(protection["trades"]["entry_date"].min()).year)
+    sentences = wording.protection_answer_sentences(answer, totals, protection["share_paid"],
+                                                    protection["protection_net"], protection["n_trades"], first_year,
+                                                    protection["n_open"])
+    ui.answer_box(QUESTION, answer, " ".join(sentences))
+
+    # ----------------------------------------------------------------------- #
+    # i. Protection across every trade since 2010
+    # ----------------------------------------------------------------------- #
+    ui.section_heading("i", f"Protection across every trade since {first_year}")
+    ui.note(f"**Model estimate.** Free historical option prices are not available, so every past call is priced "
+            f"with Black-Scholes from data known on the day it is bought: volatility = the trailing "
+            f"{op.VOL_WINDOW}-day realised volatility × today's implied/realised ratio for a call of similar "
+            f"moneyness, rate = that day's T-bill, spread = today's relative bid/ask spread for that call. "
+            f"Each call is struck at the trade's stop-level price (frozen at entry), expires after "
+            f"{op.PROTECTION_LIFE} trading days and is rolled at the same strike if the trade is still open.")
+    rows = [
+        ("Total P&L", ui.fmt_money(before["total_pnl"]), ui.fmt_money(after["total_pnl"])),
+        ("Sharpe ratio", ui.fmt_num(before["sharpe"]), ui.fmt_num(after["sharpe"])),
+        ("Maximum drawdown", ui.fmt_money(before["max_drawdown"]), ui.fmt_money(after["max_drawdown"])),
+        ("Worst trade", ui.fmt_money(before["worst_trade"]), ui.fmt_money(after["worst_trade"])),
+        ("Trades where the protection paid", "", ui.fmt_pct(protection["share_paid"], 0)),
+        ("Premium paid (all calls, incl. rolls)", "", ui.fmt_money(protection["total_premium"])),
+        ("Received back (expiries and resales)", "", ui.fmt_money(protection["total_payoff"])),
+    ]
+    st.dataframe(pd.DataFrame(rows, columns=["", "Unprotected", "Protected (model)"]),
+                 hide_index=True, width="stretch")
+    curves = protection["daily"].cumsum() + bt["capital"]
+    fig = go.Figure()
+    fig.add_scatter(x=curves.index, y=curves["unprotected"], name="Unprotected",
+                    line=dict(color=ui.COLORS["slate"], width=1.6))
+    fig.add_scatter(x=curves.index, y=curves["protected"], name="Protected (model estimate)",
+                    line=dict(color=ui.COLORS["ink"], width=1.6))
+    fig.add_hline(y=bt["capital"], line=ui.ref_line())
+    fig.update_yaxes(title_text="Equity ($)", tickformat="$,.0f")
+    ui.show_chart(fig, "Equity with and without a protective call on every trade's short leg", height=360)
+
+    # ----------------------------------------------------------------------- #
+    # ii. Why options can't create an edge
+    # ----------------------------------------------------------------------- #
+    ui.section_heading("ii", "Why options can't create an edge")
+    ui.kpi_row([
+        ("Gross P&L before costs", ui.fmt_money(protection["gross_pnl"]), None, "default strategy, all trades"),
+        ("Trading and borrow costs", ui.fmt_money(-protection["stock_costs"]), None),
+        ("Protection, net cost", ui.fmt_money(protection["protection_net"]), None, "premiums less payoffs"),
+        ("Worst trade", ui.fmt_money(after["worst_trade"]), None,
+         f"protected; {ui.fmt_money(before['worst_trade'])} unprotected"),
+    ])
+    md(wording.edge_sentence(protection["gross_pnl"], protection["stock_costs"], protection["protection_net"]))
+
+
+# --------------------------------------------------------------------------- #
+# iii. Why the stop-loss wasn't enough
+# --------------------------------------------------------------------------- #
+ui.section_heading("iii", "Why the stop-loss wasn't enough")
 if slip is None:
     ui.note("No stop-losses with the default settings, so there is no slippage to measure.")
 else:
@@ -83,9 +147,9 @@ else:
 
 
 # --------------------------------------------------------------------------- #
-# ii. Put-call parity in one line
+# iv. Put-call parity in one line
 # --------------------------------------------------------------------------- #
-ui.section_heading("ii", "Put-call parity in one line")
+ui.section_heading("iv", "Put-call parity in one line")
 st.latex(r"C - P = S_0 - D - K e^{-rT}")
 md("A call minus a put on the same strike and expiry behaves like owning the stock minus a bond "
    "that pays the strike at expiry (and minus the dividends the option holder misses). So if you "
@@ -99,7 +163,7 @@ md("Chapter IV relied on the same no-arbitrage idea in currency markets: covered
 # --------------------------------------------------------------------------- #
 # The snapshot: shown prominently (it is refreshed by the scheduled job, never on page load)
 # --------------------------------------------------------------------------- #
-ui.section_heading("iii", "Checking parity in today's market")
+ui.section_heading("v", "Checking parity in today's market")
 snapshot = ui.load_options_snapshot(ticker)
 if snapshot is None:
     ui.note(f"No option snapshot is saved for {ticker} (the short leg of today's trade). "
@@ -210,9 +274,9 @@ md(f"{parity['n_within_bounds']} of {parity['n_strikes']} strikes are within the
 
 
 # --------------------------------------------------------------------------- #
-# iv. Three ways to hold the short leg
+# vi. Three ways to hold the short leg
 # --------------------------------------------------------------------------- #
-ui.section_heading("iv", "Three ways to hold the short leg")
+ui.section_heading("vi", "Three ways to hold the short leg")
 built = op.structures(state, ticket, clean, stop_price, T, divs["pv"], borrow_rate=BORROW_RATE)
 A, B, C = built["A"], built["B"], built["C"]
 rounding = built["rounding"]
@@ -272,9 +336,9 @@ ui.show_chart(fig, f"Short-leg P&L at expiry ({expiry:%d %b %Y}), {ticker} only,
 
 
 # --------------------------------------------------------------------------- #
-# v. What protection costs vs what it would have saved
+# vii. What protection costs today vs what it would have saved
 # --------------------------------------------------------------------------- #
-ui.section_heading("v", "What protection costs vs what it would have saved")
+ui.section_heading("vii", "What protection costs today vs what it would have saved")
 if slip is None:
     ui.note("No historical stop slippage to compare with.")
 else:
@@ -338,9 +402,9 @@ elif slip is not None:
 
 
 # --------------------------------------------------------------------------- #
-# vi. In one line for a client
+# viii. In one line for a client
 # --------------------------------------------------------------------------- #
-ui.section_heading("vi", "In one line for a client")
+ui.section_heading("viii", "In one line for a client")
 cap_pct = C["premium"] / (spot * n)
 client = (f"{ticker}: for clients who cannot borrow the stock or want to avoid recall risk, a synthetic "
           f"short (buy the {B['strike']:g} put, sell the {B['strike']:g} call, {expiry:%d %b}) replicates the "
@@ -352,13 +416,31 @@ st.code(client, language=None, wrap_lines=True)
 
 
 # --------------------------------------------------------------------------- #
-# vii. Caveats
+# ix. What would actually save the pair? (from the research and Pair Hunt results)
 # --------------------------------------------------------------------------- #
-ui.section_heading("vii", "Caveats")
+ui.section_heading("ix", "What would actually save the pair?")
+research = ui.load_research()
+pair_hunt = ui.load_pair_hunt(quiet=True)
+if research is not None and pair_hunt is not None:
+    grid, _, costs = research
+    zero_cost = costs.loc[costs["cost_bps"] == costs["cost_bps"].min(), "sharpe"].iloc[0]
+    walk = pair_hunt["summary"]["walk_forward"]["mined"]["strategy"]["sharpe"]
+    gross = protection["gross_pnl"] if protection["ok"] else float(trades["gross_pnl"].sum())
+    md("\n".join(f"- {line}" for line in wording.save_the_pair_sentences(
+        float(grid["test_sharpe"].max()), int((grid["test_sharpe"] > 0).sum()), len(grid), float(zero_cost),
+        float(walk), gross)))
+
+
+# --------------------------------------------------------------------------- #
+# x. Caveats
+# --------------------------------------------------------------------------- #
+ui.section_heading("x", "Caveats")
 md("\n".join(f"- {line}" for line in [
-    "**A single-day snapshot, not a backtest.** Free historical option prices are not available, so "
-    "this chapter prices today's trade once; it says nothing about how the structures would have done "
-    "over the past.",
+    "**The historical protection is a model estimate.** Free historical option prices are not available, "
+    "so sections i and ii price every past call with Black-Scholes from trailing realised volatility and "
+    "today's implied/realised ratio and spreads. Real implied volatility jumps in stressed markets, exactly "
+    "when protection is bought, so real past calls would often have cost more.",
+    "**Today's structures use a single-day snapshot.** Sections v to viii price today's trade once.",
     "**American-style options.** Early exercise means parity holds as a range, not an equality.",
     "**Estimated dividends.** Projected from the last four payments; the company may change the "
     "amount or the date.",

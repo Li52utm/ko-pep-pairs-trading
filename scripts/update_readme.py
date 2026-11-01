@@ -23,7 +23,6 @@ sys.path.insert(0, str(ROOT / "src"))
 import pandas as pd  # noqa: E402
 
 import options as op  # noqa: E402
-import trade_idea as ti  # noqa: E402
 from backtest import run_backtest  # noqa: E402
 from carry import SNB_DATE, scenario_results, snb_carry  # noqa: E402
 from data import load_all_data  # noqa: E402
@@ -48,31 +47,16 @@ def count_tests() -> int:
     return int(match.group(1))
 
 
-def protection_numbers(prices: pd.DataFrame, signals: pd.DataFrame, daily: pd.DataFrame,
-                       trades: pd.DataFrame, summary: dict) -> tuple[float, float]:
-    """(net cost of structure C's call, expected stop slippage per trade), as in chapter VII."""
-    state = ti.current_state(prices, signals)
-    ticket = ti.trade_ticket(state, capital=CAPITAL, cost_bps=COST_BPS, borrow_rate=BORROW)
-    ticker, _ = op.short_leg(ticket)
-    chain, dividends = op.load_snapshot(ticker)
-    as_of = chain["fetched_at"].iloc[0].tz_convert(None)
-    expiry = pd.Timestamp(chain["expiry"].iloc[0])
-    spot, T = float(chain["spot"].iloc[0]), (expiry - as_of.normalize()).days / 365
+def protection_history(prices: pd.DataFrame, signals: pd.DataFrame, daily: pd.DataFrame,
+                       trades: pd.DataFrame) -> dict:
+    """The historical protection model (options.protected_backtest), as in chapter VII."""
     r = float(prices["usd_3m"].iloc[-1]) / 100
-    clean, _ = op.clean_quotes(chain, as_of)
-    divs = op.expected_dividends(dividends, as_of, expiry, r)
-    stop_price = op.short_leg_stop_price(state, ticket)
-    built = op.structures(state, ticket, clean, stop_price, T, divs["pv"], borrow_rate=BORROW)
-    calls = clean[clean["type"] == "call"]
-    call = calls[calls["strike"] == built["C"]["strike"]].iloc[0]
-    q = divs["pv"] / (spot * T) if T > 0 else 0.0
-    net = op.protection_net_cost(call, spot, r, T, summary["trades"]["avg_holding_days"],
-                                 shares=built["rounding"]["shares_covered"], q=q)
-    slip = exit_slippage(signals, trades, prices, daily)
-    closed = int((~trades["open"].astype(bool)).sum())
-    stops = slip["summary"]["stops"]
-    expected = -stops["avg_slippage"] * stops["count"] / closed
-    return (net["total"]["net_cost"] if net["ok"] else float("nan")), expected
+    terms = {t: op.snapshot_call_terms(op.load_snapshot(t)[0], prices[t], r) for t in ("KO", "PEP")}
+    result = op.protected_backtest(prices, signals, daily, trades, terms, capital=CAPITAL)
+    return {"answer": op.protection_answer(result["totals"]), "totals": result["totals"],
+            "share_paid": result["share_paid"], "protection_net": result["protection_net"],
+            "n_trades": result["n_trades"], "n_open": result["n_open"],
+            "first_year": int(pd.Timestamp(result["trades"]["entry_date"].min()).year)}
 
 
 def collect_facts() -> dict:
@@ -96,7 +80,7 @@ def collect_facts() -> dict:
     snb = snb_carry(carry_only)
     years = snb["years_before"] if snb["years_before"] == snb["years_before"] else snb["years_all"]
 
-    net_cost, expected = protection_numbers(prices, signals, daily, trades, s)
+    protection = protection_history(prices, signals, daily, trades)
     test_end = prices.index[-1]
     return {
         "as_of": prices.index[-1], "start": prices.index[0], "capital": CAPITAL, "cost_bps": COST_BPS,
@@ -118,7 +102,7 @@ def collect_facts() -> dict:
         "carry_total": float(carry_only["E"].iloc[-1]), "snb_day": float(snb["total_dE"]), "snb_years": years,
         "snb_month": f"{pd.Timestamp(SNB_DATE):%B %Y}",
         "avg_slippage": -slip["avg_slippage"], "worst_slippage": -slip["worst_slippage"],
-        "protection_net_cost": net_cost, "expected_slippage": expected,
+        "protection": protection,
         "n_tests": count_tests(),
     }
 

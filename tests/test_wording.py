@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import wording
 from wording import (
     carry_lesson,
     cash_caption,
@@ -106,3 +107,30 @@ def test_leaderboard_period_and_chance_words() -> None:
     assert leaderboard_sentence(1, 10).startswith("1 of the top 10 is a named rival pair")
     assert (period_words(252), period_words(126), period_words(30)) == ("year", "six months", "30 trading days")
     assert chance_rate(0.05) == "about 1 in 20" and chance_rate(0.10) == "about 1 in 10"
+
+
+def protection_totals(after_total: float, after_sharpe: float, after_worst: float) -> dict:
+    return {"unprotected": {"total_pnl": -127_000, "sharpe": -0.13, "worst_trade": -88_600},
+            "protected": {"total_pnl": after_total, "sharpe": after_sharpe, "worst_trade": after_worst}}
+
+
+def test_protection_answer_sentences_follow_the_answer() -> None:
+    first, no = wording.protection_answer_sentences("No", protection_totals(-283_000, -0.36, -92_500), 0.26,
+                                                    -155_000, 115, 2010, n_open=1)
+    assert "since 2010 (1 still open)" in first and "lowers the total from -$127.0k to -$283.0k" in first and "since 2010" in first
+    assert "26% of trades" in no and "cost $155.0k" in no and "the total, the Sharpe ratio and the worst trade" in no
+    _, partly = wording.protection_answer_sentences("Partly", protection_totals(-90_000, -0.05, -50_000), 0.4,
+                                                    -10_000, 115, 2010)
+    assert "the Sharpe ratio and the worst trade" in partly and "does not create an edge" in partly
+    first, yes = wording.protection_answer_sentences("Yes", protection_totals(40_000, 0.2, -50_000), 0.5,
+                                                     167_000, 115, 2010)
+    assert "improves the total" in first and "do save the pair" in yes
+
+
+def test_edge_and_save_the_pair_sentences_flip() -> None:
+    assert "cannot turn a trade with no edge" in wording.edge_sentence(4_000, 131_000, -155_000)
+    assert "luck in the sample" in wording.edge_sentence(4_000, 131_000, 20_000)
+    bad = wording.save_the_pair_sentences(0.4, 6, 108, -0.6, -0.01, 4_000)
+    assert "not enough" in bad[1] and "did not help" in bad[2] and "almost nothing to protect" in bad[0]
+    good = wording.save_the_pair_sentences(0.4, 60, 108, 0.3, 0.2, 400_000)
+    assert "would help" in good[1] and "helped a little" in good[2] and "almost nothing" not in good[0]

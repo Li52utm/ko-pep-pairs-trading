@@ -297,6 +297,39 @@ def _read_options_snapshot(ticker: str, stamps: tuple[float, ...]):
 
 
 # --------------------------------------------------------------------------- #
+# Protection across every historical trade (chapter VII; a model estimate)
+# --------------------------------------------------------------------------- #
+PROTECTION_TICKERS = ("KO", "PEP")  # either can be the short leg
+
+
+def get_protection() -> dict:
+    """options.protected_backtest on the default backtest, priced from today's option snapshots.
+
+    Returns {"ok": False, "reason": ...} if a snapshot is missing or has no call with a usable
+    bid/ask (the implied/realised ratio and the spread come from those calls).
+    """
+    prices = get_data()
+    r = float(prices["usd_3m"].iloc[-1]) / 100
+    terms = {}
+    for ticker in PROTECTION_TICKERS:
+        snapshot = load_options_snapshot(ticker)
+        if snapshot is None:
+            return {"ok": False, "reason": f"there is no option snapshot for {ticker}"}
+        ticker_terms = options.snapshot_call_terms(snapshot[0], prices[ticker], r)
+        if ticker_terms.empty:
+            return {"ok": False, "reason": f"the {ticker} option snapshot has no call with a usable bid and ask"}
+        terms[ticker] = ticker_terms
+    return {"ok": True, "terms": terms, **_run_protection(terms)}
+
+
+@st.cache_data(show_spinner="Pricing protection for every trade ...")
+def _run_protection(terms: dict[str, pd.DataFrame]) -> dict:
+    daily, trades = get_backtest()
+    return options.protected_backtest(get_data(), get_signals(), daily, trades, terms,
+                                      stop=SIGNAL_DEFAULTS["stop"], capital=DEFAULT_CAPITAL)
+
+
+# --------------------------------------------------------------------------- #
 # Formatting
 # --------------------------------------------------------------------------- #
 NA = "n/a"
@@ -587,6 +620,13 @@ footer, [data-testid="stDecoration"], [data-testid="stStatusWidget"] {{ display:
 [class*="st-key-note-error"] [data-testid="stMarkdownContainer"] {{ border-left-color: var(--loss); }}
 [class*="st-key-note-"] p {{ color: var(--ink); margin-bottom: 0; }}
 
+/* The question / the answer box under each chapter heading (see answer_box). */
+[class*="st-key-answer-"] {{
+  border-top: 2px solid var(--ink); border-bottom: 1px solid var(--rule);
+  padding: 0.75rem 0 0.5rem 0; margin: 0.5rem 0 1.5rem 0;
+}}
+[class*="st-key-answer-"] p {{ color: var(--ink); margin-bottom: 0.35rem; max-width: 72ch; }}
+
 /* Numbered sections on The Story: quiet heading, lots of space above. */
 .section-heading {{
   font-family: {HEADING_FONT}; font-weight: 400; font-size: 1.65rem; color: var(--ink);
@@ -661,6 +701,18 @@ def note(text: str, kind: str = "info", container=None) -> None:
     target = container if container is not None else st
     with target.container(key=_key(f"note-{kind}", text)):
         st.markdown(text)
+
+
+def answer_box(question: str, answer: str, explanation: str = "",
+               labels: tuple[str, str] = ("The question", "The answer")) -> None:
+    """A boxed question and its generated answer (one bold word or phrase, then the reason).
+
+    Every chapter opens with one; the Trade Idea uses it with other labels for its
+    recommendation. `answer` and `explanation` must come from the numbers (src/wording.py).
+    """
+    with st.container(key=_key("answer", question, answer)):
+        st.markdown(escape_dollars(f"**{labels[0]}:** {question}"))
+        st.markdown(escape_dollars(f"**{labels[1]}: {answer}.** {explanation}".rstrip()))
 
 
 def kpi_row(items: list[tuple]) -> None:

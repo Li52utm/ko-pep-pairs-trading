@@ -94,14 +94,12 @@ def render_block(f: dict) -> str:
           f"{'cost' if snb < 0 else 'added'} {_k(snb, 'CHF')} on a single day in {f['snb_month']}"
           + (f", about {years}." if years else "."))
 
-    worth = f["protection_net_cost"] < f["expected_slippage"]
-    b6 = (("**Stop-losses slip, and insuring against it costs more than it saves.** " if not worth
-           else "**Stop-losses slip, and insuring against it pays on average.** ")
-          + f"Each stop-loss lost {_k(f['avg_slippage'])} more on average than a fill at the stop "
-          f"(worst {_k(f['worst_slippage'])}). Protecting the short leg with a call costs about "
-          f"{_k(f['protection_net_cost'])} net per trade, against an expected slippage of about "
-          f"{_k(f['expected_slippage'])} per trade"
-          + ("; the protection's value is in capping the tail, not on average." if not worth else "."))
+    prot = f["protection"]
+    sentences = wording.protection_answer_sentences(prot["answer"], prot["totals"], prot["share_paid"],
+                                                    prot["protection_net"], prot["n_trades"], prot["first_year"],
+                                                    prot.get("n_open", 0))
+    b6 = (f"**Do options save the pair? {prot['answer']}.** Each stop-loss lost {_k(f['avg_slippage'])} more on "
+          f"average than a fill at the stop (worst {_k(f['worst_slippage'])}). " + " ".join(sentences))
 
     return (
         "## Key findings\n\n"

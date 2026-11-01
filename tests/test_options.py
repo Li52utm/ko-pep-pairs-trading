@@ -243,3 +243,94 @@ def test_net_cost_without_a_usable_price_explains_instead_of_raising() -> None:
     assert result["ok"] is False and "no usable price" in result["reason"]
     stale, drops = clean_quotes(zero_bid_chain(last_trade_age_days=10), pd.Timestamp("2026-10-31 12:00"))
     assert stale.empty and sum(drops.values()) == 2  # old last trades are never used
+
+
+# --------------------------------------------------------------------------- #
+# g) Protection across every historical trade (model estimate)
+# --------------------------------------------------------------------------- #
+import options as op  # noqa: E402
+
+
+def test_black_scholes_matches_hand_value() -> None:
+    # Hull's textbook case: S = K = 100, r = 5%, sigma = 20%, T = 1 -> 10.4506.
+    assert op.black_scholes_call(100, 100, 0.05, 0.20, 1.0) == pytest.approx(10.4506, abs=1e-4)
+    # By hand: d1 = 0.35, d2 = 0.15; C = 100 N(0.35) - 100 e^-0.05 N(0.15).
+    by_hand = 100 * norm.cdf(0.35) - 100 * math.exp(-0.05) * norm.cdf(0.15)
+    assert op.black_scholes_call(100, 100, 0.05, 0.20, 1.0) == pytest.approx(by_hand, abs=1e-10)
+
+
+def flat_terms(spread: float = 0.0, ratio: float = 1.2) -> dict[str, pd.DataFrame]:
+    row = {"strike": 0.0, "moneyness": 1.0, "implied_vol": 0.2, "realised_vol": 0.2 / ratio,
+           "iv_rv_ratio": ratio, "relative_spread": spread}
+    return {"KO": pd.DataFrame([row]), "PEP": pd.DataFrame([row])}
+
+
+def short_ko_case(ko_path: np.ndarray, entry: int, exit_: int, shares: float = 1000.0):
+    """Hand-built inputs: short `shares` KO from `entry` to `exit_`, PEP flat, beta 1, alpha 0."""
+    n = len(ko_path)
+    days = pd.bdate_range("2020-01-01", periods=n)
+    prices = pd.DataFrame({"KO": ko_path, "PEP": 50.0, "usd_3m": 2.0}, index=days)
+    # alpha, beta, resid_std chosen so the stop (z = +3.5) sits at KO = 50 * e^(3.5 * 0.02) = 53.6.
+    signals = pd.DataFrame({"alpha": 0.0, "beta": 1.0, "resid_std": 0.02}, index=days)
+    held = (np.arange(n) >= entry) & (np.arange(n) < exit_)
+    daily = pd.DataFrame({"shares_KO": np.where(held, -shares, 0.0), "shares_PEP": np.where(held, shares, 0.0)},
+                         index=days)
+    stock = -shares * (ko_path[exit_] - ko_path[entry])
+    daily["net_pnl"] = 0.0
+    daily.iloc[exit_, daily.columns.get_loc("net_pnl")] = stock
+    trades = pd.DataFrame([{"entry_date": days[entry], "exit_date": days[exit_], "direction": -1,
+                            "exit_type": "exit", "net_pnl": stock, "gross_pnl": stock, "total_costs": 0.0}])
+    return prices, signals, daily, trades
+
+
+@pytest.mark.parametrize("hold", [10, 50])  # inside one call's life, and with two rolls
+def test_protected_loss_never_exceeds_cap_plus_premium(hold: int) -> None:
+    rng = np.random.default_rng(3)
+    ko = 50 * np.exp(np.cumsum(np.r_[rng.normal(0, 0.01, 80), np.full(60, 0.02)]))  # then a steady rally
+    entry = 80
+    prices, signals, daily, trades = short_ko_case(ko, entry, entry + hold)
+    result = op.protected_backtest(prices, signals, daily, trades, flat_terms())
+    row = result["trades"].iloc[0]
+    cap = 1000 * (row["strike"] - ko[entry])  # the most the short can lose up to the strike
+    assert row["strike"] == pytest.approx(50 * math.exp(3.5 * 0.02))
+    assert row["unprotected_pnl"] < -cap - row["premium"]  # the rally breaks through the cap...
+    assert row["protected_pnl"] >= -cap - row["premium"] - 1e-6  # ...but the protected loss stays inside it
+    assert row["rolls"] == (2 if hold == 50 else 0)
+    # The daily option P&L adds up to the per-trade net effect.
+    assert result["daily"]["option_pnl"].sum() == pytest.approx(row["net_effect"])
+
+
+def test_protection_uses_past_data_only() -> None:
+    rng = np.random.default_rng(5)
+    ko = 50 * np.exp(np.cumsum(rng.normal(0, 0.01, 120)))
+    entry, exit_ = 70, 85
+    base = op.protected_backtest(*short_ko_case(ko, entry, exit_), flat_terms(spread=0.1))["trades"].iloc[0]
+    future = ko.copy()
+    future[entry + 1:] *= 1.3  # a different future
+    changed = op.protected_backtest(*short_ko_case(future, entry, exit_), flat_terms(spread=0.1))["trades"].iloc[0]
+    for key in ("strike", "vol", "first_premium", "moneyness"):
+        assert changed[key] == pytest.approx(base[key]), key
+    assert changed["payoff"] != pytest.approx(base["payoff"])  # the future does change the outcome
+
+
+def test_volatility_is_trailing_realised_times_ratio() -> None:
+    rng = np.random.default_rng(9)
+    ko = 50 * np.exp(np.cumsum(rng.normal(0, 0.012, 100)))
+    entry = 80
+    row = op.protected_backtest(*short_ko_case(ko, entry, entry + 5), flat_terms(ratio=1.25))["trades"].iloc[0]
+    trailing = np.log(ko[: entry + 1]).__array__()
+    expected = np.diff(trailing)[-op.VOL_WINDOW:].std(ddof=1) * math.sqrt(252) * 1.25
+    assert row["vol"] == pytest.approx(expected)
+
+
+def totals(after_pnl: float, after_sharpe: float, after_worst: float,
+           before_sharpe: float = -0.1, before_worst: float = -80_000) -> dict:
+    return {"unprotected": {"total_pnl": -100_000, "sharpe": before_sharpe, "worst_trade": before_worst},
+            "protected": {"total_pnl": after_pnl, "sharpe": after_sharpe, "worst_trade": after_worst}}
+
+
+def test_protection_answer_rules() -> None:
+    assert op.protection_answer(totals(50_000, 0.2, -60_000)) == "Yes"
+    assert op.protection_answer(totals(-50_000, -0.05, -90_000)) == "Partly"   # better Sharpe, still a loss
+    assert op.protection_answer(totals(-150_000, -0.3, -50_000)) == "Partly"   # better worst trade only
+    assert op.protection_answer(totals(-150_000, -0.3, -90_000)) == "No"

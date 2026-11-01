@@ -490,3 +490,215 @@ def short_leg_stop_price(state: dict, ticket: dict) -> float:
         return float("nan")
     log_pep = (math.log(state["ko"]) - state["alpha"] - stop["z"] * state["resid_std"]) / state["beta"]
     return float(math.exp(log_pep))
+
+
+# --------------------------------------------------------------------------- #
+# g) Protection across every historical trade (a MODEL ESTIMATE)
+# --------------------------------------------------------------------------- #
+# Historical option prices are not available for free, so every historical call is
+# priced with Black-Scholes from data known on the day it is bought. These numbers are
+# a model estimate, not a record of tradable prices.
+PROTECTION_LIFE = 21        # trading days to expiry of each call; rolled at the same strike
+VOL_WINDOW = 60             # trailing trading days for realised volatility
+YEAR_DAYS = 252             # trading days per year for volatility and option life
+
+
+def realised_vol(prices: pd.Series, window: int = VOL_WINDOW) -> float:
+    """Annualised volatility of the last `window` daily log returns in `prices` (ddof=1).
+
+    The caller passes prices up to and including the decision day only, so no later
+    price can affect it.
+    """
+    returns = np.log(prices.dropna()).diff().dropna().iloc[-window:]
+    return float(returns.std(ddof=1) * math.sqrt(YEAR_DAYS)) if len(returns) >= 2 else float("nan")
+
+
+def snapshot_call_terms(chain: pd.DataFrame, prices: pd.Series, r: float) -> pd.DataFrame:
+    """Today's calls with a usable bid/ask: moneyness, implied vol, implied/realised ratio, spread.
+
+    chain:  the saved option chain for one ticker (load_snapshot).
+    prices: that ticker's adjusted closes up to the snapshot date (for today's realised vol).
+    Implied vol is backed out from each call's mid with implied_vol (q = 0); the
+    implied/realised ratio divides it by the trailing VOL_WINDOW-day realised vol.
+    """
+    as_of = chain["fetched_at"].iloc[0].tz_convert(None)
+    clean, _ = clean_quotes(chain, as_of)
+    calls = clean[(clean["type"] == "call") & (clean["quote_type"] == MID)].copy()
+    spot = float(chain["spot"].iloc[0])
+    T = (pd.Timestamp(chain["expiry"].iloc[0]) - as_of.normalize()).days / 365
+    rv = realised_vol(prices.loc[:as_of.normalize()])
+    calls["moneyness"] = calls["strike"] / spot
+    calls["implied_vol"] = [implied_vol(p, spot, k, r, T) for p, k in zip(calls["price"], calls["strike"])]
+    calls["realised_vol"] = rv
+    calls["iv_rv_ratio"] = calls["implied_vol"] / rv
+    calls["relative_spread"] = (calls["ask"] - calls["bid"]) / calls["price"]
+    return calls.dropna(subset=["iv_rv_ratio"]).reset_index(drop=True)[
+        ["strike", "moneyness", "implied_vol", "realised_vol", "iv_rv_ratio", "relative_spread"]]
+
+
+def similar_call(terms: pd.DataFrame, moneyness: float) -> pd.Series:
+    """Today's call whose strike / spot is closest to `moneyness`."""
+    return terms.iloc[(terms["moneyness"] - moneyness).abs().argsort().iloc[0]]
+
+
+def leg_stop_strike(leg: str, signal_row: pd.Series, direction: int, ko: float, pep: float,
+                    stop: float, y_col: str = "KO") -> float:
+    """The short leg's price at the stop z-score, the other leg fixed (frozen at entry).
+
+    The stop sits at z = -direction * stop (short spread: z = +stop). Inverting
+    z = (log KO - alpha - beta log PEP) / resid_std for the short leg gives the strike.
+    """
+    alpha, beta, std = signal_row["alpha"], signal_row["beta"], signal_row["resid_std"]
+    z_stop = -direction * stop
+    if leg == y_col:
+        return float(np.exp(alpha + beta * np.log(pep) + z_stop * std))
+    if beta == 0:
+        return float("nan")
+    return float(np.exp((np.log(ko) - alpha - z_stop * std) / beta))
+
+
+def _protect_leg(price: pd.Series, rates: pd.Series, i_entry: int, i_exit: int, n: float, strike: float,
+                 terms: pd.DataFrame, life: int) -> tuple[np.ndarray, dict]:
+    """Daily option P&L (an array over the whole sample) and a per-trade record for one leg."""
+    pnl = np.zeros(len(price))
+    values = price.to_numpy(dtype=float)
+    premium = payoff = 0.0
+    first: dict = {}
+    rolls = -1
+    i_buy = i_entry
+    while True:  # one pass per call bought: the first at entry, then one per roll
+        rolls += 1
+        spot = values[i_buy]
+        similar = similar_call(terms, strike / spot)
+        sigma = realised_vol(price.iloc[: i_buy + 1]) * float(similar["iv_rv_ratio"])
+        r = float(rates.iloc[i_buy]) / 100
+        half_spread = float(similar["relative_spread"]) / 2
+        i_expiry = i_buy + life
+        value = black_scholes_call(spot, strike, r, sigma, life / YEAR_DAYS)
+        premium += n * value * (1 + half_spread)
+        pnl[i_buy] -= n * value * half_spread  # bought at the model value plus half the spread
+        if not first:
+            first = {"sigma": sigma, "half_spread": half_spread, "moneyness": strike / spot, "spot": spot,
+                     "first_premium": n * value * (1 + half_spread)}
+        previous = value
+        end = min(i_expiry, i_exit)
+        for t in range(i_buy + 1, end + 1):
+            value = black_scholes_call(values[t], strike, r, sigma, (i_expiry - t) / YEAR_DAYS)
+            pnl[t] += n * (value - previous)
+            previous = value
+        if i_exit < i_expiry:  # sold back at the trade's exit: model value minus half the spread
+            pnl[end] -= n * value * half_spread
+            payoff += n * value * (1 - half_spread)
+            break
+        payoff += n * value  # expired: pays its intrinsic value, no spread
+        if i_expiry == i_exit:
+            break
+        i_buy = i_expiry  # roll: a new call at the same strike, bought the day the old one expires
+    return pnl, {**first, "premium": premium, "payoff": payoff, "rolls": rolls}
+
+
+def protected_backtest(prices: pd.DataFrame, signals: pd.DataFrame, daily: pd.DataFrame, trades: pd.DataFrame,
+                       call_terms: dict[str, pd.DataFrame], stop: float = 3.5, capital: float = 1_000_000,
+                       life: int = PROTECTION_LIFE, y_col: str = "KO", x_col: str = "PEP") -> dict:
+    """Every backtest trade with and without a protective call on its short leg. A MODEL ESTIMATE.
+
+    For each trade, on its execution (entry) day e:
+      - strike = the short leg's price at the stop z-score (leg_stop_strike), from the fair value
+        known at e and the other leg's price at e; frozen for the life of the trade;
+      - expiry = `life` trading days; if the trade is still open at expiry, the call pays its
+        intrinsic value and a new one is bought at the same strike;
+      - price = Black-Scholes (q = 0, because adjusted prices already include dividends) with
+        volatility = trailing VOL_WINDOW-day realised vol up to that day x today's implied/realised
+        ratio for the call of the most similar moneyness, rate = that day's T-bill;
+      - bought at model value plus half today's relative spread for that call, sold back at the
+        trade's exit at model value minus half the spread.
+    Only prices up to each purchase day enter its strike, volatility and premium; the call is then
+    marked to model each day. Shares = the backtest's short share count (fractional, not rounded
+    to contracts). call_terms: snapshot_call_terms output per ticker.
+
+    Returns per-trade rows, the daily option P&L, and totals for both versions.
+    """
+    option_pnl = np.zeros(len(daily))
+    rows = []
+    index = daily.index
+    for _, trade in trades.iterrows():
+        i_entry = index.get_loc(trade["entry_date"])
+        i_exit = index.get_loc(trade["exit_date"]) if pd.notna(trade["exit_date"]) else len(index) - 1
+        ko, pep = prices[y_col].iloc[i_entry], prices[x_col].iloc[i_entry]
+        record = {"entry_date": trade["entry_date"], "exit_date": trade["exit_date"],
+                  "direction": int(trade["direction"]), "exit_type": trade["exit_type"],
+                  "unprotected_pnl": float(trade["net_pnl"]), "ticker": "", "strike": np.nan,
+                  "premium": 0.0, "first_premium": 0.0, "payoff": 0.0, "rolls": 0}
+        largest = 0.0
+        # Normally one leg is short; with a negative beta both can be, and each gets its own call.
+        for leg, column in ((y_col, "shares_KO"), (x_col, "shares_PEP")):
+            shares = float(daily[column].iloc[i_entry])
+            if shares >= 0:
+                continue
+            strike = leg_stop_strike(leg, signals.iloc[i_entry], int(trade["direction"]), ko, pep, stop, y_col)
+            if not np.isfinite(strike):
+                continue
+            pnl, leg_record = _protect_leg(prices[leg], prices["usd_3m"], i_entry, i_exit, -shares, strike,
+                                           call_terms[leg], life)
+            option_pnl += pnl
+            record["ticker"] = f"{record['ticker']}, {leg}" if record["ticker"] else leg
+            notional = -shares * leg_record["spot"]
+            if notional > largest:  # strike, moneyness and vol shown for the larger short leg
+                largest = notional
+                record.update({"strike": strike, "shares": -shares, "spot": leg_record["spot"],
+                               "moneyness": leg_record["moneyness"], "vol": leg_record["sigma"],
+                               "half_spread": leg_record["half_spread"]})
+            record["premium"] += leg_record["premium"]
+            record["first_premium"] += leg_record["first_premium"]
+            record["payoff"] += leg_record["payoff"]
+            record["rolls"] += leg_record["rolls"]
+        record["net_effect"] = record["payoff"] - record["premium"]
+        record["protected_pnl"] = record["unprotected_pnl"] + record["net_effect"]
+        rows.append(record)
+
+    per_trade = pd.DataFrame(rows)
+    option_daily = pd.Series(option_pnl, index=index, name="option_pnl")
+    unprotected = daily["net_pnl"]
+    protected = unprotected + option_daily
+    return {
+        "trades": per_trade,
+        "daily": pd.DataFrame({"unprotected": unprotected, "protected": protected, "option_pnl": option_daily}),
+        "totals": {"unprotected": _protection_totals(unprotected, per_trade["unprotected_pnl"], capital),
+                   "protected": _protection_totals(protected, per_trade["protected_pnl"], capital)},
+        "gross_pnl": float(trades["gross_pnl"].sum()),
+        "stock_costs": float(trades["total_costs"].sum()),
+        "total_premium": float(per_trade["premium"].sum()),
+        "total_payoff": float(per_trade["payoff"].sum()),
+        "protection_net": float(per_trade["net_effect"].sum()),
+        "share_paid": float((per_trade["net_effect"] > 0).mean()) if len(per_trade) else float("nan"),
+        "n_trades": len(per_trade),
+        "n_open": int(per_trade["exit_date"].isna().sum()) if len(per_trade) else 0,
+    }
+
+
+def _protection_totals(net_pnl: pd.Series, trade_pnl: pd.Series, capital: float) -> dict:
+    from metrics import max_drawdown, sharpe_ratio  # imported here: metrics is not needed elsewhere
+
+    worst = trade_pnl.idxmin()
+    return {"total_pnl": float(net_pnl.sum()), "sharpe": sharpe_ratio(net_pnl / capital),
+            "max_drawdown": max_drawdown(net_pnl, capital)["max_drawdown"],
+            "worst_trade": float(trade_pnl[worst]), "worst_trade_index": int(worst)}
+
+
+ANSWERS = ("Yes", "Partly", "No")
+
+
+def protection_answer(totals: dict) -> str:
+    """'Yes', 'Partly' or 'No': do options save the pair?
+
+    Yes:    protected total P&L and Sharpe both positive.
+    Partly: protection improves the Sharpe or the worst trade, but the total stays negative.
+    No:     otherwise.
+    """
+    before, after = totals["unprotected"], totals["protected"]
+    if after["total_pnl"] > 0 and after["sharpe"] > 0:
+        return "Yes"
+    improves = after["sharpe"] > before["sharpe"] or after["worst_trade"] > before["worst_trade"]
+    if improves and after["total_pnl"] <= 0:
+        return "Partly"
+    return "No"

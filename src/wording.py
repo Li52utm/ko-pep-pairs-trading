@@ -205,3 +205,76 @@ def tail_sentence(worst_realised: float, capped_loss: float, entry_label: str, t
                 "when a desk has hard risk limits, even if the cover costs more than it saves on average.")
     return (f"Here even the tail does not justify it: {worst}, within the ${capped_loss / 1e3:.1f}k "
             "the protected structure could still lose.")
+
+
+def _and_list(items: list[str]) -> str:
+    """['a', 'b', 'c'] -> 'a, b and c'."""
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def _k(x: float) -> str:
+    """-155492 -> '-$155.5k' (sign kept)."""
+    return f"{'-' if x < 0 else ''}${abs(x) / 1e3:.1f}k"
+
+
+def protection_answer_sentences(answer: str, totals: dict, share_paid: float, protection_net: float,
+                                n_trades: int, first_year: int, n_open: int = 0) -> tuple[str, str]:
+    """Two sentences under the "Do options save the pair?" answer (Yes / Partly / No)."""
+    before, after = totals["unprotected"], totals["protected"]
+    moved = "improves" if after["total_pnl"] > before["total_pnl"] else "lowers"
+    still_open = f" ({n_open} still open)" if n_open else ""
+    first = (f"Across all {n_trades} trades since {first_year}{still_open}, buying a call on the short leg at its stop level "
+             f"{moved} the total from {_k(before['total_pnl'])} to {_k(after['total_pnl'])} and moves the Sharpe "
+             f"ratio from {before['sharpe']:.2f} to {after['sharpe']:.2f} (a model estimate).")
+    if answer == "Yes":
+        second = ("With protection the strategy makes money and earns a positive Sharpe ratio, so in this model "
+                  "the options do save the pair.")
+    elif answer == "Partly":
+        better = []
+        if after["sharpe"] > before["sharpe"]:
+            better.append("the Sharpe ratio")
+        if after["worst_trade"] > before["worst_trade"]:
+            better.append(f"the worst trade ({_k(before['worst_trade'])} to {_k(after['worst_trade'])})")
+        second = (f"Protection improves {' and '.join(better)}, but the strategy still loses money: insurance "
+                  "limits the damage, it does not create an edge.")
+    else:
+        worse = [name for name, b, a in (("the total", before["total_pnl"], after["total_pnl"]),
+                                         ("the Sharpe ratio", before["sharpe"], after["sharpe"]),
+                                         ("the worst trade", before["worst_trade"], after["worst_trade"]))
+                 if a < b]
+        second = (f"The calls paid off on only {share_paid:.0%} of trades and {earned_or_cost(protection_net)} "
+                  f"{_k(abs(protection_net))} net in total"
+                  + (f", so the protected version is worse on {_and_list(worse)}." if worse else "."))
+    return first, second
+
+
+def edge_sentence(gross_pnl: float, stock_costs: float, protection_net: float) -> str:
+    """Why options cannot create an edge: an option adds its own cost to a trade with little gross profit."""
+    gross = (f"Before any costs the strategy {made_or_lost(gross_pnl)} {_k(abs(gross_pnl))} over the whole sample; "
+             f"trading and borrow costs took {_k(stock_costs)}.")
+    if protection_net < 0:
+        return (gross + f" The protection cost a further {_k(abs(protection_net))} net: an option is priced "
+                "close to its expected payoff, so on average it moves risk around and charges for the move. "
+                "It cannot turn a trade with no edge into a profitable one.")
+    return (gross + f" The protection added {_k(protection_net)} net in this model, but an option priced fairly "
+            "is not expected to add value, so treat a gain here as luck in the sample rather than an edge.")
+
+
+def save_the_pair_sentences(best_test_sharpe: float, n_positive: int, n_settings: int, zero_cost_sharpe: float,
+                            walk_forward_sharpe: float, gross_pnl: float) -> list[str]:
+    """What would actually save the pair, from the research results (each sentence follows its number)."""
+    lines = [
+        (f"**A real edge in the signal.** Before costs the default strategy {made_or_lost(gross_pnl)} "
+         f"{_k(abs(gross_pnl))}; " + ("there is almost nothing to protect. " if abs(gross_pnl) < 50_000 else "")
+         + f"Of {n_settings} research settings, {n_positive} had a positive Sharpe ratio on the test period "
+         f"(best {best_test_sharpe:.2f})."),
+        (("**Cheaper execution is not enough.** " if zero_cost_sharpe < 0 else "**Cheaper execution would help.** ")
+         + f"With zero trading costs the chosen setting's test Sharpe ratio is {zero_cost_sharpe:.2f}"
+         + (", still below zero." if zero_cost_sharpe < 0 else ", so costs are part of the problem.")),
+        (("**A different pair, chosen without hindsight, did not help either.** " if walk_forward_sharpe <= 0
+          else "**A different pair, chosen without hindsight, helped a little.** ")
+         + f"The walk-forward search across pairs had a Sharpe ratio of {walk_forward_sharpe:.2f}."),
+        ("**So what would save it is new information, not new instruments:** a signal that predicts when the "
+         "spread will converge (for example earnings or flows), tested out of sample before any money is risked."),
+    ]
+    return lines
