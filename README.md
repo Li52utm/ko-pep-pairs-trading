@@ -27,9 +27,9 @@ All numbers are from data to **30 October 2026** (daily closes from 4 January 20
 - **KO/PEP is not special, and the best pair looks like luck.** KO/PEP ranked 504 of 780 possible pairs among 40 large US stocks. The best pair (VZ/WMT, Sharpe 0.57) beat the best pair found in markets of random, unrelated stocks in only 3 of 20 simulations.
 - **Chosen without hindsight, the strategy did not beat cash.** A walk-forward version that picks cointegrated pairs on the past year and trades them for six months lost 6.8% on 20 rival pairs (Sharpe -0.20) and lost 0.9% on all 780 pairs (Sharpe -0.01).
 - **Cheap Swiss franc funding hid a large tail risk.** Funding the trade with a franc loan earned CHF 17.9k of carry over the whole period; the Swiss National Bank's removal of the EUR/CHF floor cost CHF 165.1k on a single day in January 2015, about 11 years of the average interest income.
-- **Stop-losses slip, and insuring against it costs more than it saves.** Each stop-loss lost $6.1k more on average than a fill at the stop (worst $47.0k). Protecting the short leg with a call costs about $6.3k net per trade, against an expected slippage of about $1.2k per trade; the protection's value is in capping the tail, not on average.
+- **Stop-losses slip, and insuring against it costs more than it saves.** Each stop-loss lost $6.1k more on average than a fill at the stop (worst $47.0k). Protecting the short leg with a call costs about $6.5k net per trade, against an expected slippage of about $1.2k per trade; the protection's value is in capping the tail, not on average.
 
-Automated tests: **132** (pytest, offline), run on every push and before every data refresh is committed.
+Automated tests: **145** (pytest, offline), run on every push and before every data refresh is committed.
 <!-- AUTO:END -->
 
 ## The seven chapters

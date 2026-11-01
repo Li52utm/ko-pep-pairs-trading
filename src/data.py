@@ -2,6 +2,7 @@
 
 Sources:
     - KO, PEP adjusted close            (yfinance)
+    - SPY adjusted close (the market)   (yfinance; used for market betas and validation)
     - USDCHF spot, CHF per 1 USD        (yfinance, ticker CHF=X)
     - US 3-month T-bill, % p.a.         (FRED: DTB3, daily)
     - Swiss 3-month interbank, % p.a.   (FRED: IR3TIB01CHM156N, monthly)
@@ -40,6 +41,7 @@ SNAPSHOT_PATH = Path(__file__).resolve().parent.parent / "results" / "data_snaps
 DEFAULT_START = "2010-01-01"
 
 EQUITY_TICKERS = ["KO", "PEP"]
+MARKET_TICKER = "SPY"  # S&P 500 ETF: the market, for betas; not part of the trading calendar
 FX_TICKER = "CHF=X"
 FRED_SERIES = {"DTB3": "usd_3m", "IR3TIB01CHM156N": "chf_3m"}
 
@@ -136,7 +138,7 @@ def _yf_column(tickers: list[str], column: str, start, end) -> pd.DataFrame:
 
 
 def _fetch_equities(start, end) -> pd.DataFrame:
-    return _yf_column(EQUITY_TICKERS, "Adj Close", start, end)
+    return _yf_column([*EQUITY_TICKERS, MARKET_TICKER], "Adj Close", start, end)
 
 
 def _fetch_fx(start, end) -> pd.DataFrame:
@@ -197,6 +199,7 @@ def download_all_data(start: str = DEFAULT_START, end: str | None = None) -> pd.
 
     Returns a DataFrame indexed by date with columns:
         KO, PEP   adjusted close (USD)
+        SPY       adjusted close of the S&P 500 ETF (USD)
         usdchf    CHF per 1 USD (NaN on the few equity days with no Yahoo FX bar)
         usd_3m    US 3-month T-bill rate, % p.a.
         chf_3m    Swiss 3-month interbank rate, % p.a. (previous month's average,
@@ -219,13 +222,13 @@ def download_all_data(start: str = DEFAULT_START, end: str | None = None) -> pd.
 
     # Always cache from DEFAULT_START (or earlier) so different `start`s share a file.
     cache_start = min(start_ts, pd.Timestamp(DEFAULT_START))
-    equities = _cached("equities", _fetch_equities, cache_start, end_ts)
+    equities = _cached("stocks", _fetch_equities, cache_start, end_ts)  # KO, PEP, SPY
     fx = _cached("usdchf", _fetch_fx, cache_start, end_ts)
     rates = _cached("rates", _fetch_rates, cache_start - RATE_LOOKBACK, end_ts)
     rates = _lag_chf_rate(rates)
 
     # US equity trading days: both stocks priced. FX is joined, not intersected.
-    prices = equities.dropna().join(fx, how="left")
+    prices = equities.dropna(subset=EQUITY_TICKERS).join(fx, how="left")
     prices = prices.loc[start_ts:end_ts]
 
     # Forward-fill rates through their own calendar plus the trading days,

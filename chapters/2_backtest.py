@@ -17,6 +17,7 @@ import streamlit as st  # noqa: E402
 from plotly.subplots import make_subplots  # noqa: E402
 
 import ui  # noqa: E402
+import validation  # noqa: E402
 from research import BETA_MODES, GRID_AXES, TEST_START  # noqa: E402
 
 ui.apply_theme()
@@ -381,5 +382,21 @@ with st.expander("How the maths works"):
              r"N_{PEP} = \frac{-d\,\beta\,G}{1 + |\beta|}")
     st.markdown("**Costs:** transaction cost (bps per leg, per side) on traded notional at entry "
                 "and exit; borrow cost = |short notional| × borrow rate / 252 per day.")
+
+
+# --------------------------------------------------------------------------- #
+# Data quality (results/data_validation.json, from scripts/validate_data.py)
+# --------------------------------------------------------------------------- #
+with st.expander("Data quality"):
+    report = ui.load_validation()
+    if report is None:
+        ui.note("No validation report yet: `scripts/validate_data.py` (run by the scheduled refresh) writes it.")
+    else:
+        st.markdown(ui.escape_dollars(validation.summary_line(report)
+                                      + " PASS: the data agrees with an independent reference. WARN: a documented "
+                                        "difference with no material effect on the results. FAIL: the data is "
+                                        "wrong, and the scheduled refresh stops before writing anything."))
+        st.dataframe(validation.summary_table(report), hide_index=True, width="stretch")
+        st.caption("Full details, with every mismatch and its explanation: docs/DATA_VALIDATION.md.")
 
 ui.footer()

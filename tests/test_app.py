@@ -16,6 +16,7 @@ from streamlit.testing.v1 import AppTest
 import data
 import options
 import ui
+import validation
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = str(ROOT / "app.py")
@@ -53,6 +54,7 @@ def test_every_chapter_renders_offline_from_the_snapshot(offline_app, page: str)
     last = ui.data_as_of()
     assert f"Data as of {last.day} {last:%B %Y}, refreshed automatically each weekday." in captions
     assert "investment advice" in captions  # footer on every chapter
+    assert validation.summary_line(ui.load_validation()) in captions  # data checks line in every footer
     # No page offers to fetch data (settings buttons such as "Reset to defaults" are fine).
     assert not [b.label for b in at.button if "refresh" in b.label.lower() or "fetch" in b.label.lower()]
 
@@ -84,3 +86,11 @@ def test_saving_the_pair_with_a_zero_bid_chain(offline_app, monkeypatch) -> None
     assert not at.exception, [e.value for e in at.exception]
     text = markdown_text(at)
     assert "last trade" in text and "bid/ask spread is unknown" in text
+
+
+def test_backtest_shows_the_data_quality_table(offline_app) -> None:
+    at = offline_app("chapters/2_backtest.py")
+    assert any(e.label == "Data quality" for e in at.expander)
+    titles = [r["title"] for r in ui.load_validation()["checks"]]
+    shown = [table.value for table in at.dataframe if "Check" in table.value.columns]
+    assert shown and shown[0]["Check"].tolist() == titles

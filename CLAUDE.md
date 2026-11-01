@@ -315,6 +315,34 @@ and no button fetches data. Freshness comes from a scheduled GitHub Action:
   `ui.get_data` clears all Streamlit caches when the snapshot file changes under a running server.
 - `.github/workflows/tests.yml` runs pytest on every push and pull request.
 
+## Data validation (`src/validation.py`, `scripts/validate_data.py`)
+
+Eight checks, each PASS (agrees with a reference), WARN (documented difference, no material
+effect) or FAIL (data wrong). `refresh_snapshots.py` runs them on the fresh downloads after the
+pipeline checks and BEFORE writing; any FAIL stops the refresh (`ValidationFailed`, exit code 1).
+Output: `results/data_validation.json` and `docs/DATA_VALIDATION.md` (summary table, then details).
+`validate_data.py` on its own checks the committed snapshots. Checks are pure functions, tested on
+hand-built examples in `tests/test_validation.py`; thresholds are constants at the top of the module.
+
+- a) Second source: Nasdaq's public API (`api.nasdaq.com`, no key; the last ten years only).
+  Checked 2026-11-01: Stooq is gone from pandas-datareader and its site needs a browser challenge;
+  WSJ/MarketWatch block scripts; Alpha Vantage/FMP need a key. Close-to-close returns on Yahoo's
+  split-adjusted `Close` vs Nasdaq's closes (same basis). Days differing by more than 1 point are
+  explained if Yahoo records a spin-off as a non-integer split (PFE 2020, MRK 2021, T 2022, FDX 2026).
+  If Nasdaq is unreachable the check is WARN, never FAIL.
+- b) Total return rebuilt from raw closes (split adjustment undone), dividends and splits vs Yahoo's
+  adjusted close. c) Trading days vs the NYSE calendar (`pandas_market_calendars`). d) Every adjusted
+  move above 8%: confirmed / suspect by the second source; before its coverage, suspect only if undone
+  the next day (SPY's return shown for context). e) Dividends and splits per year for KO, PEP, SPY.
+  f) Yahoo USD/CHF vs FRED DEXSZUS: lead/lag, then level gap and 20-day return correlation at the best
+  lag (a daily-correlation rule would flag the ~6-hour quote-time offset as bad data; it did on the
+  first run, so the rule was changed and the change logged in the module). g) Rate ranges, spot
+  checks, DTB3 vs DGS3MO. h) Option snapshot: no crossed quotes, no negative prices.
+- The dashboard footer shows "Data checks: N passed, M warnings, as of DATE"
+  (`validation.summary_line`, via `ui.load_validation`); chapter II has a "Data quality" expander.
+- SPY (adjusted close) is in the price snapshot for market betas and validation. It is NOT part of
+  the trading calendar (still every day both KO and PEP trade).
+
 ## Run the dashboard
 
 ```

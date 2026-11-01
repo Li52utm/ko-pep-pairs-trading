@@ -1,9 +1,12 @@
 # Pinned to the versions the project was developed and tested with (Python 3.14).
+fpdf2==2.9.0
 numpy==2.5.4
 pandas==3.1.0
 pandas-datareader==0.11.1
+pandas_market_calendars==5.6.0
 plotly==7.1.0
 pytest==9.2.0
+requests==2.34.2
 scipy==1.18.1
 statsmodels==0.15.0
 streamlit==1.66.1

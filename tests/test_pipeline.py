@@ -11,7 +11,7 @@ from pipeline import DataCheckError, check_option_chain, check_prices, check_uni
 
 def prices(n: int = 5, end: str = "2026-10-30") -> pd.DataFrame:
     index = pd.bdate_range(end=end, periods=n)
-    return pd.DataFrame({"KO": 90.0, "PEP": 130.0, "usdchf": 0.82, "usd_3m": 4.0, "chf_3m": -0.04},
+    return pd.DataFrame({"KO": 90.0, "PEP": 130.0, "SPY": 680.0, "usdchf": 0.82, "usd_3m": 4.0, "chf_3m": -0.04},
                         index=index)
 
 
@@ -44,7 +44,7 @@ def test_missing_or_zero_stock_prices_are_rejected() -> None:
     with pytest.raises(DataCheckError, match="zero or negative"):
         check_prices(zero, None)
     no_rates = prices(6)
-    no_rates.iloc[-1, 3] = np.nan
+    no_rates.loc[no_rates.index[-1], "usd_3m"] = np.nan
     with pytest.raises(DataCheckError, match="latest interest rates"):
         check_prices(no_rates, None)
 

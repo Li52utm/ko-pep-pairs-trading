@@ -7,13 +7,15 @@ The GitHub Action .github/workflows/refresh-data.yml runs it each weekday at 22:
 
 Steps:
     1. Download, into a fresh temporary cache so nothing stale is reused:
-       prices and rates (data.download_all_data), the 40-stock universe
+       prices and rates (data.download_all_data, KO, PEP and SPY), the 40-stock universe
        (universe.download_universe), and the KO and PEP option chains.
     2. Check every download (src/pipeline.py): not empty, not fewer rows than the
        committed snapshot, no missing stock prices, not every option bid zero.
        If ANY download fails or any check fails, stop with an error and write nothing.
-    3. Write results/data_snapshot.csv, results/universe_snapshot.csv and the option
-       snapshots, then re-run src/research.py and src/pair_hunt.py (which read the new
+    3. Validate the downloads against independent sources (scripts/validate_data.py,
+       src/validation.py). Any FAIL stops the refresh here, again before anything is written.
+    4. Write results/data_snapshot.csv, results/universe_snapshot.csv, the option
+       snapshots, results/data_validation.json and docs/DATA_VALIDATION.md, then re-run src/research.py and src/pair_hunt.py (which read the new
        snapshots) and regenerate the README auto-block (scripts/update_readme.py).
 """
 
@@ -35,6 +37,8 @@ import data  # noqa: E402
 import options  # noqa: E402
 import pipeline  # noqa: E402
 import universe  # noqa: E402
+import validate_data  # noqa: E402
+import validation  # noqa: E402
 
 OPTION_TICKERS = ("KO", "PEP")  # either can be the short leg of today's trade
 
@@ -67,6 +71,21 @@ def download_everything() -> dict:
     return {"prices": prices, "universe": uni, "chains": chains}
 
 
+class ValidationFailed(RuntimeError):
+    """At least one data validation check is FAIL."""
+
+
+def validate(downloads: dict) -> dict:
+    """Run every validation check on the fresh downloads; raise on any FAIL."""
+    rep = validate_data.run_validation(downloads["prices"], downloads["universe"],
+                                       {t: chain for t, (chain, _) in downloads["chains"].items()})
+    validate_data.print_summary(rep)
+    failed = [r["title"] for r in rep["checks"] if r["status"] == validation.FAIL]
+    if failed:
+        raise ValidationFailed(f"data validation failed: {'; '.join(failed)}")
+    return rep
+
+
 def write_snapshots(downloads: dict) -> None:
     downloads["prices"].to_csv(data.SNAPSHOT_PATH)
     downloads["universe"].to_csv(universe.SNAPSHOT_PATH)
@@ -86,11 +105,13 @@ def run_script(path: Path) -> None:
 def main() -> int:
     try:
         downloads = download_everything()
+        report = validate(downloads)
     except Exception as error:  # any download or check failure: write nothing
         print(f"\nREFRESH ABORTED, nothing written: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
 
     write_snapshots(downloads)
+    validate_data.write_report(report)
     run_script(ROOT / "src" / "research.py")
     run_script(ROOT / "src" / "pair_hunt.py")
     run_script(ROOT / "scripts" / "update_readme.py")

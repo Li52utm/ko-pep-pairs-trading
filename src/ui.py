@@ -30,6 +30,7 @@ import data
 from data import is_stale, load_all_data
 from metrics import exit_slippage, summarise, yearly_table
 import options
+import validation
 from pair_hunt import percentile_vs_luck
 from research import DEFAULT_PARAMS, TEST_START, TRAIN_END, TRAIN_START, run_period
 from signals import compute_signals
@@ -687,14 +688,31 @@ def section_heading(numeral: str, title: str) -> None:
 REPO_URL = "https://github.com/Li52utm/ko-pep-pairs-trading"
 
 
+VALIDATION_PATH = RESULTS_DIR / "data_validation.json"
+
+
+def load_validation() -> dict | None:
+    """results/data_validation.json (written by scripts/validate_data.py), or None if missing."""
+    if not VALIDATION_PATH.exists():
+        return None
+    return _read_validation(VALIDATION_PATH.stat().st_mtime)
+
+
+@st.cache_data(show_spinner=False)
+def _read_validation(stamp: float) -> dict:
+    return json.loads(VALIDATION_PATH.read_text(encoding="utf-8"))
+
+
 def footer(lead: str = "Educational project. Not investment advice.") -> None:
     st.divider()
     st.caption(
         f"{lead} "
-        "Data: Yahoo Finance (KO, PEP adjusted closes; USD/CHF), "
+        "Data: Yahoo Finance (KO, PEP, SPY adjusted closes; USD/CHF), "
         "FRED (US 3-month T-bill DTB3; Swiss 3-month interbank rate IR3TIB01CHM156N). "
         f"Source code: [GitHub]({REPO_URL})."
     )
+    st.caption(validation.summary_line(load_validation())
+               + " Details: [docs/DATA_VALIDATION.md](" + REPO_URL + "/blob/main/docs/DATA_VALIDATION.md).")
 
 
 # --------------------------------------------------------------------------- #

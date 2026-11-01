@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-PRICE_COLUMNS = ("KO", "PEP")
+PRICE_COLUMNS = ("KO", "PEP", "SPY")  # must be priced on every equity trading day
 RATE_COLUMNS = ("usd_3m", "chf_3m")
 
 
@@ -36,9 +36,9 @@ def check_prices(new: pd.DataFrame, previous: pd.DataFrame | None) -> None:
     if missing:
         raise DataCheckError(f"prices: missing columns {missing}")
     if new[list(PRICE_COLUMNS)].isna().any().any():
-        raise DataCheckError("prices: a KO or PEP price is missing on an equity trading day")
+        raise DataCheckError("prices: a KO, PEP or SPY price is missing on an equity trading day")
     if (new[list(PRICE_COLUMNS)] <= 0).any().any():
-        raise DataCheckError("prices: a KO or PEP price is zero or negative")
+        raise DataCheckError("prices: a KO, PEP or SPY price is zero or negative")
     if new[list(RATE_COLUMNS)].iloc[-1].isna().any():
         raise DataCheckError("prices: the latest interest rates are missing")
     if new["usdchf"].dropna().empty:
