@@ -7,12 +7,12 @@
     "freeze_at_entry": true,
     "max_holding_days": 30
   },
-  "train_sharpe": 0.6526399931910026,
+  "train_sharpe": 0.6526485123694409,
   "train_n_trades": 37,
   "n_eligible": 91,
   "n_neighbours": 8,
-  "neighbour_median_train_sharpe": 0.3138245948826165,
-  "gap_vs_neighbours": 0.33881539830838614,
+  "neighbour_median_train_sharpe": 0.3138288964920711,
+  "gap_vs_neighbours": 0.3388196158773698,
   "possible_lucky_spike": true,
   "compute_signals_kwargs": {
     "window": 252,
