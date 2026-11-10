@@ -1,8 +1,8 @@
 {
   "sample": {
     "start": "2010-01-04",
-    "end": "2026-11-06",
-    "years": 16.83778234086242,
+    "end": "2026-11-09",
+    "years": 16.84599589322382,
     "n_tickers": 40,
     "n_rival_pairs": 20,
     "n_mined_pairs": 780
@@ -10,71 +10,71 @@
   "hindsight_directions": {
     "best_pair": "INTC/AMD",
     "best_direction": "long A / long B",
-    "best_return": 24.227841425271073,
-    "median_best_return": 6.961655981982096
+    "best_return": 27.411192806027763,
+    "median_best_return": 7.080339314409768
   },
   "leaderboard": {
     "rivals": {
       "best_pair": "GS/MS",
-      "best_sharpe": 0.4932073933927052,
-      "tenth_best_sharpe": 0.02777115631851751,
-      "median_sharpe": 0.004596652164125902,
+      "best_sharpe": 0.49314537336194586,
+      "tenth_best_sharpe": 0.027768525450239032,
+      "median_sharpe": 0.004596735053670193,
       "share_positive": 0.5
     },
     "mined": {
       "best_pair": "VZ/WMT",
-      "best_sharpe": 0.5728172086302542,
-      "tenth_best_sharpe": 0.4605267914776271,
-      "median_sharpe": -0.030836190520951746,
-      "share_positive": 0.43974358974358974
+      "best_sharpe": 0.5727491855302727,
+      "tenth_best_sharpe": 0.46125925628376013,
+      "median_sharpe": -0.02898982494936957,
+      "share_positive": 0.4371794871794872
     }
   },
-  "ko_pep_rank_in_mined": 526,
+  "ko_pep_rank_in_mined": 530,
   "luck": {
     "n_sims": 20,
-    "seconds_per_sim": 27.788138062,
-    "best_sharpe_min": 0.4626575912711923,
-    "best_sharpe_median": 0.6173855731881815,
-    "best_sharpe_max": 0.9144944266421134,
-    "tenth_best_sharpe_median": 0.4374178212791099,
-    "rule_of_thumb_best_sharpe": 0.8893785359542251
+    "seconds_per_sim": 22.208732214,
+    "best_sharpe_min": 0.475140940298978,
+    "best_sharpe_median": 0.6064599929792931,
+    "best_sharpe_max": 0.9184079639904881,
+    "tenth_best_sharpe_median": 0.42223597952704894,
+    "rule_of_thumb_best_sharpe": 0.8891616936894017
   },
   "walk_forward": {
     "rivals": {
       "strategy": {
-        "total_return": -0.06869882375166914,
-        "sharpe": -0.20355199577226696
+        "total_return": -0.07116807480506966,
+        "sharpe": -0.2107607432687024
       },
       "pairs_long_only": {
-        "total_return": 1.203513833294905,
-        "sharpe": 1.0277558695467108
+        "total_return": 1.2055709890105744,
+        "sharpe": 1.0293549147166194
       },
       "equal_weight": {
-        "total_return": 2.452415674032777,
-        "sharpe": 0.9890420015292242
+        "total_return": 2.47489774822021,
+        "sharpe": 0.9973787177216498
       },
       "n_windows": 32,
       "windows_with_no_pair": 8,
       "avg_pairs_selected": 1.5,
-      "n_trades": 170
+      "n_trades": 171
     },
     "mined": {
       "strategy": {
-        "total_return": -0.019615016135986804,
-        "sharpe": -0.02365393077016616
+        "total_return": -0.02959229898116887,
+        "sharpe": -0.03564430471740966
       },
       "pairs_long_only": {
-        "total_return": 2.1949174755354885,
-        "sharpe": 0.7946206508436465
+        "total_return": 2.207788562117139,
+        "sharpe": 0.7990721018220043
       },
       "equal_weight": {
-        "total_return": 2.452415674032777,
-        "sharpe": 0.9890420015292242
+        "total_return": 2.47489774822021,
+        "sharpe": 0.9973787177216498
       },
       "n_windows": 32,
       "windows_with_no_pair": 0,
       "avg_pairs_selected": 5.0,
-      "n_trades": 573
+      "n_trades": 574
     }
   }
 }
